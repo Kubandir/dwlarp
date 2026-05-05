@@ -16,6 +16,8 @@
  *            -o dwlb-status dwlb-status.c $(pkg-config --libs libpulse)
  */
 
+#include "../config.h"
+
 #include <dirent.h>
 #include <errno.h>
 #include <signal.h>
@@ -241,28 +243,44 @@ static const char *bat_glyph(int pct, int chg) {
 }
 
 static void render(void) {
-	const char *vi = (cached_muted || cached_vol < 0) ? I_VOL_OFF
-	               : cached_vol <= 33 ? I_VOL_LO : I_VOL_HI;
-	char bat[64];
-	if (cached_bat_pct < 0) bat[0] = 0;
-	else snprintf(bat, sizeof bat, "%s %d%%",
-	              bat_glyph(cached_bat_pct, cached_bat_chg), cached_bat_pct);
+	char buf[1024];
+	size_t off = 0;
+	#define APPEND(...) do {                                              \
+		int _n = snprintf(buf + off, sizeof buf - off, __VA_ARGS__);  \
+		if (_n > 0 && (size_t)_n < sizeof buf - off) off += (size_t)_n;\
+	} while (0)
 
-	char cpu[64];
+	APPEND("^fg(" FG ")  ");
+#if WS_STATUS_DISK
+	APPEND("%s %d%%   ", I_DISK, cached_disk);
+#endif
+#if WS_STATUS_CPU
 	if (cached_cpu_temp < 0)
-		snprintf(cpu, sizeof cpu, "%s %d.%d%%", I_CPU, cached_cpu_t / 10, cached_cpu_t % 10);
+		APPEND("%s %d.%d%%   ", I_CPU, cached_cpu_t / 10, cached_cpu_t % 10);
 	else
-		snprintf(cpu, sizeof cpu, "%s %d.%d%%   %s %d\xc2\xb0""C",
-		         I_CPU, cached_cpu_t / 10, cached_cpu_t % 10,
-		         I_TEMP, cached_cpu_temp);
-
-	printf("^fg(" FG ")  %s %d%%   %s   %s    "
-	       "^fg(" SEP ")/    "
-	       "^fg(" FG ")%s   %s   %s  \n",
-	       I_DISK, cached_disk,
-	       cpu,
-	       bat, vi, I_BRI[cached_bri_idx], cached_wifi_icon);
+		APPEND("%s %d.%d%%   %s %d\xc2\xb0""C   ",
+		       I_CPU, cached_cpu_t / 10, cached_cpu_t % 10,
+		       I_TEMP, cached_cpu_temp);
+#endif
+	APPEND(" ^fg(" SEP ")/    ^fg(" FG ")");
+#if WS_STATUS_BATTERY
+	if (cached_bat_pct >= 0)
+		APPEND("%s %d%%   ", bat_glyph(cached_bat_pct, cached_bat_chg), cached_bat_pct);
+#endif
+#if WS_STATUS_VOLUME
+	APPEND("%s   ", (cached_muted || cached_vol < 0) ? I_VOL_OFF
+	              : cached_vol <= 33 ? I_VOL_LO : I_VOL_HI);
+#endif
+#if WS_STATUS_BRIGHTNESS
+	APPEND("%s   ", I_BRI[cached_bri_idx]);
+#endif
+#if WS_STATUS_WIFI
+	APPEND("%s ", cached_wifi_icon);
+#endif
+	APPEND(" \n");
+	fputs(buf, stdout);
 	fflush(stdout);
+	#undef APPEND
 }
 
 /* ---------- pulse: update cache only, never render ---------- */

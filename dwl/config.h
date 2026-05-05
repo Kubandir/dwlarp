@@ -1,22 +1,29 @@
+/* User-facing knobs (colors, fonts, app commands, keybinds) live in the
+ * repo-root config.h. This file holds dwl-specific internals only. */
+#include "../config.h"
+
 /* Taken from https://github.com/djpohly/dwl/issues/466 */
 #define COLOR(hex)    { ((hex >> 24) & 0xFF) / 255.0f, \
                         ((hex >> 16) & 0xFF) / 255.0f, \
                         ((hex >> 8) & 0xFF) / 255.0f, \
                         (hex & 0xFF) / 255.0f }
+/* Build a translucent variant of a 0xRRGGBBAA color for previews. */
+#define COLOR_ALPHA(hex, a) COLOR(((hex) & 0xffffff00u) | (a))
+
 /* appearance */
 static const int sloppyfocus               = 1;
 static const int bypass_surface_visibility = 0;
 static const unsigned int borderpx         = 2;
 static const unsigned int gappx            = 6;
-static const float rootcolor[]             = COLOR(0x222222ff);
-static const float bordercolor[]           = COLOR(0x1e3a3aff);
-static const float focuscolor[]            = COLOR(0x3a7268ff);
-static const float urgentcolor[]           = COLOR(0xff0000ff);
+static const float rootcolor[]             = COLOR(WS_BG);
+static const float bordercolor[]           = COLOR(WS_BORDER);
+static const float focuscolor[]            = COLOR(WS_FOCUS);
+static const float urgentcolor[]           = COLOR(WS_URGENT);
 static const float fullscreen_bg[]         = {0.0f, 0.0f, 0.0f, 1.0f};
-static const float resizepreviewcolor[]    = COLOR(0x3a7268cc); /* resize preview line color (RGBA) */
-static const unsigned int resizepreviewpx  = 2;                  /* resize preview line thickness */
-static const float movepreviewbordercolor[]= COLOR(0x3a7268cc); /* drop-target border (RGBA) */
-static const float movepreviewbgcolor[]    = COLOR(0x3a726840); /* drop-target fill (more transparent) */
+static const float resizepreviewcolor[]    = COLOR_ALPHA(WS_FOCUS, 0xcc);
+static const unsigned int resizepreviewpx  = 2;
+static const float movepreviewbordercolor[]= COLOR_ALPHA(WS_FOCUS, 0xcc);
+static const float movepreviewbgcolor[]    = COLOR_ALPHA(WS_FOCUS, 0x40);
 static const unsigned int movepreviewbw    = 2;                  /* drop-target border thickness */
 static const float resize_factor           = 0.0002f;
 static const uint32_t resize_interval_ms   = 16;
@@ -69,8 +76,8 @@ static const enum libinput_config_accel_profile accel_profile = LIBINPUT_CONFIG_
 static const double accel_speed = 0.0;
 static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TAP_MAP_LRM;
 
-/* Win key as modifier */
-#define MODKEY WLR_MODIFIER_LOGO
+/* MODKEY comes from WS_MOD in the root config.h. */
+#define MODKEY WS_MOD
 
 /* Czech QWERTZ: unshifted number row → shifted number row */
 #define TAGKEYS(KEY,SKEY,TAG) \
@@ -79,19 +86,19 @@ static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TA
 
 #define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
 
-static const char *termcmd[]    = { "foot", NULL };
-static const char *menucmd[]    = { "bemenu-desktop", NULL };
-static const char *firefoxcmd[] = { "thorium", NULL };
+static const char *termcmd[]     = { WS_TERM_CMD,     NULL };
+static const char *launchercmd[] = { WS_LAUNCHER_CMD, NULL };
+static const char *browsercmd[]  = { WS_BROWSER_CMD,  NULL };
 
 static const Key keys[] = {
 	/* modifier                   key                      function           argument */
 
-	/* applications */
-	{ MODKEY,                     XKB_KEY_Return,          spawn,             {.v = termcmd} },
-	{ MODKEY,                     XKB_KEY_d,               spawn,             {.v = menucmd} },
-	{ MODKEY,                     XKB_KEY_s,               spawn,             {.v = firefoxcmd} },
-	{ MODKEY|WLR_MODIFIER_SHIFT,  XKB_KEY_S,               spawn,             SHCMD("$HOME/.local/bin/screenshot-area") },
-	{ MODKEY,                     XKB_KEY_l,               spawn,             SHCMD("swaylock") },
+	/* applications (commands + keys defined in ../config.h) */
+	{ MODKEY,                     WS_KEY_TERM,             spawn,             {.v = termcmd} },
+	{ MODKEY,                     WS_KEY_LAUNCHER,         spawn,             {.v = launchercmd} },
+	{ MODKEY,                     WS_KEY_BROWSER,          spawn,             {.v = browsercmd} },
+	{ MODKEY,                     WS_KEY_LOCK,             spawn,             SHCMD(WS_LOCK_CMD) },
+	{ MODKEY|WLR_MODIFIER_SHIFT,  WS_KEY_SCREENSHOT,       spawn,             SHCMD(WS_SCREENSHOT_CMD) },
 
 	/* window management */
 	{ MODKEY,                     XKB_KEY_q,               killclient,        {0} },

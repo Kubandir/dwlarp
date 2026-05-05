@@ -1,3 +1,6 @@
+/* User-facing knobs (font, bar colors) live in the repo-root config.h. */
+#include "../config.h"
+
 #define HEX_COLOR(hex)				\
 	{ .red   = ((hex >> 24) & 0xff) * 257,	\
 	  .green = ((hex >> 16) & 0xff) * 257,	\
@@ -14,17 +17,16 @@ static bool center_title = true;
 static bool custom_title = true;
 static bool active_color_title = false;
 static uint32_t buffer_scale = 1;
-static char *fontstr = "FiraCode Nerd Font:weight=bold:size=11, Symbols Nerd Font:size=12";
+static char *fontstr = WS_BAR_FONT;
 static char *tags_names[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
 
-/* Semi-transparent black bar; active workspace has dark gray bg */
-static pixman_color_t active_fg_color          = HEX_COLOR(0xffffffff);
-static pixman_color_t active_bg_color          = HEX_COLOR(0x2a2f3acc);
-static pixman_color_t occupied_fg_color        = HEX_COLOR(0xffffffff);
-static pixman_color_t occupied_bg_color        = HEX_COLOR(0x000000cc);
-static pixman_color_t inactive_fg_color        = HEX_COLOR(0xffffffff);
-static pixman_color_t inactive_bg_color        = HEX_COLOR(0x000000cc);
-static pixman_color_t urgent_fg_color          = HEX_COLOR(0xffffffff);
-static pixman_color_t urgent_bg_color          = HEX_COLOR(0xee3300ff);
-static pixman_color_t middle_bg_color          = HEX_COLOR(0x000000cc);
-static pixman_color_t middle_bg_color_selected = HEX_COLOR(0x000000cc);
+static pixman_color_t active_fg_color          = HEX_COLOR(WS_BAR_FG);
+static pixman_color_t active_bg_color          = HEX_COLOR(WS_BAR_ACTIVE_BG);
+static pixman_color_t occupied_fg_color        = HEX_COLOR(WS_BAR_FG);
+static pixman_color_t occupied_bg_color        = HEX_COLOR(WS_BAR_BG);
+static pixman_color_t inactive_fg_color        = HEX_COLOR(WS_BAR_FG);
+static pixman_color_t inactive_bg_color        = HEX_COLOR(WS_BAR_BG);
+static pixman_color_t urgent_fg_color          = HEX_COLOR(WS_BAR_FG);
+static pixman_color_t urgent_bg_color          = HEX_COLOR(WS_BAR_URGENT_BG);
+static pixman_color_t middle_bg_color          = HEX_COLOR(WS_BAR_BG);
+static pixman_color_t middle_bg_color_selected = HEX_COLOR(WS_BAR_BG);

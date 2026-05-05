@@ -266,11 +266,45 @@ if [ ! -f "$LAYOUT_CFG" ]; then
     say "seeded $LAYOUT_CFG (default: above — edit to below/left/right)"
 fi
 
-# swaylock theme matching dwl's teal palette. Only if user has none.
+# Pull a single string macro out of the root config.h. Strips the surrounding
+# quotes so the value is usable as a shell value or a sed substitution target.
+read_string_macro() {
+    awk -v k="$1" '
+        $1 == "#define" && $2 == k {
+            sub(/^[^"]*"/, "")
+            sub(/"[^"]*$/, "")
+            print
+            exit
+        }
+    ' "$SRC/config.h"
+}
+
+# Pull a numeric (token) macro: e.g. `#define FOO 14` → `14`.
+read_number_macro() {
+    awk -v k="$1" '$1=="#define" && $2==k { print $3; exit }' "$SRC/config.h"
+}
+
+# swaylock: render the template from config.h. Only seed if the user has no
+# config — never clobber a manual one.
 SWAYLOCK_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/swaylock/config"
 if [ ! -f "$SWAYLOCK_CFG" ]; then
     say "seeding swaylock theme → $SWAYLOCK_CFG"
-    install -Dm644 "$SRC/assets/swaylock.config" "$SWAYLOCK_CFG"
+    mkdir -p "$(dirname "$SWAYLOCK_CFG")"
+    LOCK_SCREEN=$(read_string_macro WS_LOCK_SCREEN_HEX)
+    LOCK_RING=$(read_string_macro WS_LOCK_RING_HEX)
+    LOCK_TEXT=$(read_string_macro WS_LOCK_TEXT_HEX)
+    LOCK_WRONG=$(read_string_macro WS_LOCK_WRONG_HEX)
+    LOCK_FONT=$(read_string_macro WS_LOCK_FONT)
+    LOCK_FONT_SIZE=$(read_number_macro WS_LOCK_FONT_SIZE)
+    sed \
+        -e "s|@WS_LOCK_SCREEN_HEX@|$LOCK_SCREEN|g" \
+        -e "s|@WS_LOCK_RING_HEX@|$LOCK_RING|g"     \
+        -e "s|@WS_LOCK_TEXT_HEX@|$LOCK_TEXT|g"     \
+        -e "s|@WS_LOCK_WRONG_HEX@|$LOCK_WRONG|g"   \
+        -e "s|@WS_LOCK_FONT@|$LOCK_FONT|g"         \
+        -e "s|@WS_LOCK_FONT_SIZE@|$LOCK_FONT_SIZE|g" \
+        "$SRC/assets/swaylock.config.in" > "$SWAYLOCK_CFG"
+    chmod 644 "$SWAYLOCK_CFG"
 fi
 
 say "installing dwl-session → /usr/local/bin (so greeters find it)"
@@ -280,8 +314,18 @@ say "installing wayland session entry"
 $SUDO install -Dm644 "$SRC/desktop/dwl.desktop" /usr/share/wayland-sessions/dwl.desktop
 
 WALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/dwl"
-say "installing wallpaper → $WALL_DIR/wallpaper.png"
-install -Dm644 "$SRC/assets/wallpaper.png" "$WALL_DIR/wallpaper.png"
+WALL_SRC=$(read_string_macro WS_WALLPAPER)
+[ -z "$WALL_SRC" ] && WALL_SRC="assets/wallpaper.png"
+case "$WALL_SRC" in
+    /*) ;;                          # absolute, leave alone
+    *)  WALL_SRC="$SRC/$WALL_SRC" ;;
+esac
+if [ -f "$WALL_SRC" ]; then
+    say "installing wallpaper from $WALL_SRC → $WALL_DIR/wallpaper.png"
+    install -Dm644 "$WALL_SRC" "$WALL_DIR/wallpaper.png"
+else
+    warn "wallpaper not found at $WALL_SRC — skipping"
+fi
 
 # ---------- optional greeter swap (ly) ----------
 detect_active_greeter() {
