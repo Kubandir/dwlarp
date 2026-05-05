@@ -284,6 +284,13 @@ read_number_macro() {
     awk -v k="$1" '$1=="#define" && $2==k { print $3; exit }' "$SRC/config.h"
 }
 
+# foot terminal — drop the bundled config if the user has none.
+FOOT_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/foot/foot.ini"
+if [ ! -f "$FOOT_CFG" ]; then
+    say "seeding foot config → $FOOT_CFG"
+    install -Dm644 "$SRC/assets/foot.ini" "$FOOT_CFG"
+fi
+
 # swaylock: render the template from config.h. Only seed if the user has no
 # config — never clobber a manual one.
 SWAYLOCK_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/swaylock/config"
