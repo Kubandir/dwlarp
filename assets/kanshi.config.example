@@ -1,0 +1,28 @@
+# kanshi — output layout daemon for wlroots compositors.
+#
+# kanshi picks the FIRST profile whose `output` lines all match what's
+# currently connected. Output names come from `wlr-randr` — substitute
+# yours below (HDMI-A-1, DP-2, DP-3, etc).
+#
+# Coordinates are in compositor (logical) pixels. The origin is the top-left
+# of the virtual desktop; outputs are placed by their top-left corner.
+
+# ---- laptop only (no external connected) -----------------------------------
+profile laptop {
+    output eDP-1 enable mode 1920x1080 position 0,0
+}
+
+# ---- laptop + 3440x1440 ultrawide on top, centered -------------------------
+# Total canvas: 3440 x (1440+1080). Laptop is 1920 wide, so its x is
+# (3440-1920)/2 = 760 to center it under the external.
+profile docked_top {
+    output DP-1  enable mode 3440x1440 position 0,0
+    output eDP-1 enable mode 1920x1080 position 760,1440
+}
+
+# ---- laptop + 3440x1440 ultrawide on the right (dad's setup) ---------------
+# Vertically centered relative to each other.
+profile docked_right {
+    output eDP-1 enable mode 1920x1080 position 0,180
+    output DP-1  enable mode 3440x1440 position 1920,0
+}

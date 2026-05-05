@@ -1,0 +1,45 @@
+#!/bin/sh
+# dwl-wallpaper — span one image across all enabled outputs.
+#
+# Computes the bounding box from `wlr-randr`, scales the image to cover it,
+# crops one slice per output, feeds each to its own swaybg. No daemon, no
+# config, no state. Re-run on output hotplug.
+#
+# Usage: dwl-wallpaper PATH
+
+set -eu
+
+IMG=${1:?usage: dwl-wallpaper IMG}
+[ -f "$IMG" ] || { echo "no such file: $IMG" >&2; exit 1; }
+
+MAGICK=$(command -v magick || command -v convert) \
+    || { echo "imagemagick required" >&2; exit 1; }
+command -v wlr-randr >/dev/null || { echo "wlr-randr required" >&2; exit 1; }
+command -v swaybg    >/dev/null || { echo "swaybg required"    >&2; exit 1; }
+
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/dwl-wallpaper"
+mkdir -p "$CACHE"
+
+# Per-output "name x y w h" from wlr-randr's plain-text dump.
+LAYOUT=$(wlr-randr | awk '
+    function flush() { if (n && en) print n, x, y, w, h }
+    /^[^ \t]/        { flush(); n=$1; en=0; x=0; y=0; w=0; h=0 }
+    /Enabled: yes/   { en=1 }
+    /current\)/      { split($1, m, "x"); w=m[1]+0; h=m[2]+0 }
+    /Position:/      { split($2, p, ","); x=p[1]+0; y=p[2]+0 }
+    END              { flush() }
+')
+[ -n "$LAYOUT" ] || { echo "no enabled outputs" >&2; exit 1; }
+
+W=$(echo "$LAYOUT" | awk '{ if ($2+$4>m) m=$2+$4 } END { print m }')
+H=$(echo "$LAYOUT" | awk '{ if ($3+$5>m) m=$3+$5 } END { print m }')
+
+"$MAGICK" "$IMG" -resize "${W}x${H}^" -gravity center -extent "${W}x${H}" "$CACHE/full.png"
+
+pkill -x swaybg 2>/dev/null || true
+sleep 0.1
+
+echo "$LAYOUT" | while read -r name x y w h; do
+    "$MAGICK" "$CACHE/full.png" -crop "${w}x${h}+${x}+${y}" +repage "$CACHE/$name.png"
+    setsid -f swaybg -o "$name" -i "$CACHE/$name.png" -m fill >/dev/null 2>&1
+done

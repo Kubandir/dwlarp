@@ -97,7 +97,7 @@ install_deps_void() {
         libseat-devel hwdata libdisplay-info-devel
         libpulse-devel
         foot bemenu swaybg mako brightnessctl playerctl
-        grim slurp wl-clipboard
+        grim slurp wl-clipboard wlr-randr kanshi ImageMagick
         xdg-desktop-portal xdg-desktop-portal-gtk
         xauth xorg-server-xwayland
         nerd-fonts-firacode noto-fonts-ttf
@@ -122,7 +122,7 @@ install_deps_arch() {
         libxcb xcb-util-wm libdrm seatd hwdata libdisplay-info
         libpulse
         foot bemenu swaybg mako brightnessctl playerctl
-        grim slurp wl-clipboard
+        grim slurp wl-clipboard wlr-randr kanshi imagemagick
         xdg-desktop-portal xdg-desktop-portal-gtk
         xorg-xwayland
         ttf-firacode-nerd ttf-nerd-fonts-symbols
@@ -149,7 +149,7 @@ install_deps_debian() {
         libdisplay-info-dev hwdata
         libpulse-dev
         foot bemenu swaybg mako-notifier brightnessctl playerctl
-        grim slurp wl-clipboard
+        grim slurp wl-clipboard wlr-randr kanshi imagemagick
         xdg-desktop-portal xdg-desktop-portal-gtk
         xwayland
         fonts-firacode fonts-noto fonts-symbola
@@ -244,7 +244,16 @@ make -C "$SRC/dwlb-leftstatus" PREFIX="$HOME/.local" install
 # ---------- install scripts, desktop entry, wallpaper ----------
 say "installing user scripts → ~/.local/bin"
 install -Dm755 "$SRC/scripts/dwl-autostart"   "$HOME/.local/bin/dwl-autostart"
+install -Dm755 "$SRC/scripts/dwl-wallpaper"   "$HOME/.local/bin/dwl-wallpaper"
 install -Dm755 "$SRC/scripts/screenshot-area" "$HOME/.local/bin/screenshot-area"
+
+KANSHI_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/kanshi/config"
+if [ ! -f "$KANSHI_CFG" ]; then
+    say "seeding kanshi config → $KANSHI_CFG (edit to taste)"
+    install -Dm644 "$SRC/assets/kanshi.config.example" "$KANSHI_CFG"
+else
+    say "kanshi config exists at $KANSHI_CFG — leaving it alone"
+fi
 
 say "installing dwl-session → /usr/local/bin (so greeters find it)"
 $SUDO install -Dm755 "$SRC/scripts/dwl-session" /usr/local/bin/dwl-session

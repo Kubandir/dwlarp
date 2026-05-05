@@ -26,9 +26,21 @@ if ! pgrep -x pipewire >/dev/null 2>&1; then
     fi
 fi
 
-# Wallpaper, notifications
+# Output layout (multi-monitor positioning).
+command -v kanshi >/dev/null 2>&1 && _restart kanshi kanshi
+
+# Wallpaper. Spans the image across all outputs if dwl-wallpaper + imagemagick
+# are present; otherwise falls back to a per-monitor fill via swaybg.
 WALL="${XDG_DATA_HOME:-$HOME/.local/share}/dwl/wallpaper.png"
-[ -f "$WALL" ] && command -v swaybg >/dev/null 2>&1 && _restart swaybg swaybg -i "$WALL" -m fill
+if [ -f "$WALL" ]; then
+    if command -v dwl-wallpaper >/dev/null 2>&1 \
+        && { command -v magick >/dev/null 2>&1 || command -v convert >/dev/null 2>&1; }; then
+        sleep 0.3  # let kanshi place outputs first
+        dwl-wallpaper "$WALL" &
+    elif command -v swaybg >/dev/null 2>&1; then
+        _restart swaybg swaybg -i "$WALL" -m fill
+    fi
+fi
 command -v mako >/dev/null 2>&1 && _restart mako mako
 
 # xdg-desktop-portal (file pickers, screen share). Path differs across distros.
