@@ -5,9 +5,16 @@
 # else). Picks the largest external by area, places it relative to the
 # internal per the policy in:
 #
-#     ${XDG_CONFIG_HOME:-~/.config}/dwl/layout    one of: above below left right
+#     ${XDG_CONFIG_HOME:-~/.config}/dwl/layout
 #
-# Default policy: above (external on top, internal centered below).
+# Format: <direction> [DX@DY]
+#   direction: above | below | left | right
+#   DX@DY:     optional pixel offset for the external monitor relative to its
+#              auto-computed position. Negative values allowed.
+#
+# Examples:   above            (default centered)
+#             left  10@-100    (left, 10px right and 100px up of centered)
+#             right 0@200      (right, 200px lower)
 #
 # Idempotent. Single-output systems are left alone (dwl's default placement is
 # fine when there's nothing to position relative to).
@@ -15,9 +22,24 @@
 set -eu
 
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/dwl/layout"
-POLICY=${DWL_LAYOUT:-}
-[ -z "$POLICY" ] && [ -r "$CONF" ] && POLICY=$(tr -d '[:space:]' < "$CONF")
-[ -z "$POLICY" ] && POLICY=above
+RAW=${DWL_LAYOUT:-}
+[ -z "$RAW" ] && [ -r "$CONF" ] && RAW=$(awk 'NF{print; exit}' "$CONF")
+[ -z "$RAW" ] && RAW=above
+
+# Split: first word = policy, second word (optional) = DX@DY offset.
+POLICY=${RAW%% *}
+OFFSET=
+case "$RAW" in *' '*) OFFSET=${RAW#* } ;; esac
+DX=0; DY=0
+if [ -n "$OFFSET" ]; then
+    case "$OFFSET" in
+        *@*) DX=${OFFSET%@*}; DY=${OFFSET#*@} ;;
+        *)   echo "dwl-autolayout: bad offset '$OFFSET' (want DX@DY)" >&2; exit 2 ;;
+    esac
+    case "$DX$DY" in
+        *[!0-9-]*) echo "dwl-autolayout: offset must be integers" >&2; exit 2 ;;
+    esac
+fi
 
 WALL=${DWL_WALLPAPER:-${XDG_DATA_HOME:-$HOME/.local/share}/dwl/wallpaper.png}
 
@@ -80,6 +102,17 @@ case "$POLICY" in
         echo "dwl-autolayout: unknown policy '$POLICY' (want: above|below|left|right)" >&2
         exit 2 ;;
 esac
+
+# Apply user offset to the external. Then shift everything so min coord is 0
+# (negative origins make dwl-wallpaper's bbox math nonsensical).
+ex=$(( ex + DX )); ey=$(( ey + DY ))
+
+if [ "$ex" -lt "$ix" ]; then sx=$(( -ex )); else sx=$(( -ix )); fi
+[ "$sx" -lt 0 ] && sx=0
+if [ "$ey" -lt "$iy" ]; then sy=$(( -ey )); else sy=$(( -iy )); fi
+[ "$sy" -lt 0 ] && sy=0
+ex=$(( ex + sx )); ix=$(( ix + sx ))
+ey=$(( ey + sy )); iy=$(( iy + sy ))
 
 wlr-randr --output "$ENAME" --pos "${ex},${ey}" \
           --output "$INAME" --pos "${ix},${iy}"
