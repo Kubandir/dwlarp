@@ -1,28 +1,50 @@
 # kanshi — output layout daemon for wlroots compositors.
 #
-# kanshi picks the FIRST profile whose `output` lines all match what's
-# currently connected. Output names come from `wlr-randr` — substitute
-# yours below (HDMI-A-1, DP-2, DP-3, etc).
+# kanshi picks the FIRST profile whose `output` lines all match the currently
+# connected outputs, applies it, then runs `exec` once. On hotplug it re-runs.
+# Output names come from `wlr-randr` — substitute yours where needed.
 #
-# Coordinates are in compositor (logical) pixels. The origin is the top-left
-# of the virtual desktop; outputs are placed by their top-left corner.
+# Coordinates are LOGICAL pixels: origin at top-left of the virtual desktop,
+# each output anchored by its top-left corner. To move a monitor "up", lower
+# its Y. To move it "left", lower its X. Negative coords are fine.
 
-# ---- laptop only (no external connected) -----------------------------------
+# kanshi runs each profile's `exec` after a match (initial AND hotplug), so
+# the dwl-wallpaper line is what re-spans the wallpaper when a monitor is
+# plugged or unplugged.
+
+# ---- laptop only -----------------------------------------------------------
 profile laptop {
     output eDP-1 enable mode 1920x1080 position 0,0
+    exec ~/.local/bin/dwl-wallpaper ~/.local/share/dwl/wallpaper.png
 }
 
-# ---- laptop + 3440x1440 ultrawide on top, centered -------------------------
-# Total canvas: 3440 x (1440+1080). Laptop is 1920 wide, so its x is
-# (3440-1920)/2 = 760 to center it under the external.
-profile docked_top {
+# ---- mine: 3440x1440 ultrawide on top, centered above 1920x1080 laptop -----
+# External anchors at 0,0. Laptop centers under it: x = (3440-1920)/2 = 760,
+# y = 1440 (just below the external).
+profile mine {
     output DP-1  enable mode 3440x1440 position 0,0
     output eDP-1 enable mode 1920x1080 position 760,1440
+    exec ~/.local/bin/dwl-wallpaper ~/.local/share/dwl/wallpaper.png
 }
 
-# ---- laptop + 3440x1440 ultrawide on the right (dad's setup) ---------------
-# Vertically centered relative to each other.
-profile docked_right {
-    output eDP-1 enable mode 1920x1080 position 0,180
-    output DP-1  enable mode 3440x1440 position 1920,0
+# ---- dad: 3440x1440 ultrawide as main, laptop to the LEFT and a bit UP -----
+# Main anchors at 1920,200 so there's a 1920-wide column on its left for the
+# laptop. Laptop sits at 0,0 (top-left); reducing main's Y makes the laptop
+# sit "more above"; increasing it makes the laptop sit "more below".
+profile dad {
+    output eDP-1 enable mode 1920x1080 position 0,0
+    output DP-1  enable mode 3440x1440 position 1920,200
+    exec ~/.local/bin/dwl-wallpaper ~/.local/share/dwl/wallpaper.png
 }
+
+# Quick reference for tweaking positions:
+#
+#   Goal                              Change
+#   ───────────────────────────────── ───────────────────────────────────────
+#   Move external further left        decrease its X
+#   Move external further right       increase its X
+#   Move external further up          decrease its Y
+#   Move external further down        increase its Y
+#   Center laptop under wider screen  laptop.X = (extW - lapW) / 2
+#   Bottom-align laptop with main     laptop.Y = main.Y + main.H - lap.H
+#   Top-align laptop with main        laptop.Y = main.Y
