@@ -11,6 +11,11 @@
 #     --skip-build    Do not (re)build wlroots even if 0.19 missing
 #     --branch <ref>  Git branch/tag/sha to clone (default: main)
 #     --local         Force using current working tree (skip clone)
+#     --with-ly       Install + enable ly as the display-manager greeter
+#                     (replaces gdm/sddm/lightdm). Skipped on Debian (ly
+#                     is not packaged). When neither --with-ly nor
+#                     --no-ly is given the script prompts.
+#     --no-ly         Skip the greeter prompt entirely
 #     -h | --help
 
 set -euo pipefail
@@ -21,6 +26,7 @@ BRANCH="main"
 SKIP_DEPS=0
 SKIP_BUILD=0
 FORCE_LOCAL=0
+WITH_LY=ask   # ask | yes | no
 
 # ---------- argument parsing ----------
 while [ $# -gt 0 ]; do
@@ -29,6 +35,8 @@ while [ $# -gt 0 ]; do
         --skip-build) SKIP_BUILD=1 ;;
         --branch)     BRANCH="$2"; shift ;;
         --local)      FORCE_LOCAL=1 ;;
+        --with-ly)    WITH_LY=yes ;;
+        --no-ly)      WITH_LY=no ;;
         -h|--help)
             sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
@@ -274,6 +282,60 @@ $SUDO install -Dm644 "$SRC/desktop/dwl.desktop" /usr/share/wayland-sessions/dwl.
 WALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/dwl"
 say "installing wallpaper → $WALL_DIR/wallpaper.png"
 install -Dm644 "$SRC/assets/wallpaper.png" "$WALL_DIR/wallpaper.png"
+
+# ---------- optional greeter swap (ly) ----------
+detect_active_greeter() {
+    if command -v systemctl >/dev/null 2>&1; then
+        for g in gdm gdm3 sddm lightdm ly greetd; do
+            systemctl is-enabled "$g" >/dev/null 2>&1 && { echo "$g"; return; }
+        done
+    fi
+    # Void / runit
+    if [ -d /var/service ]; then
+        for g in gdm sddm lightdm ly greetd; do
+            [ -L "/var/service/$g" ] && { echo "$g"; return; }
+        done
+    fi
+}
+
+install_ly_greeter() {
+    local current="$1"
+    case "$DISTRO" in
+        debian)
+            warn "ly is not packaged on Debian; skipping greeter swap"
+            return ;;
+        arch)
+            $SUDO pacman -S --needed --noconfirm ly || { warn "ly install failed"; return; } ;;
+        void)
+            $SUDO xbps-install -Sy ly || { warn "ly install failed"; return; } ;;
+    esac
+
+    say "installing ly config → /etc/ly/config.ini"
+    $SUDO install -Dm644 "$SRC/assets/ly.config.ini" /etc/ly/config.ini
+
+    # Enable ly, disable the previous greeter.
+    case "$DISTRO" in
+        arch)
+            [ -n "$current" ] && [ "$current" != "ly" ] && $SUDO systemctl disable "$current" || true
+            $SUDO systemctl enable ly ;;
+        void)
+            [ -n "$current" ] && [ "$current" != "ly" ] && $SUDO rm -f "/var/service/$current"
+            [ -L /var/service/ly ] || $SUDO ln -s /etc/sv/ly /var/service/ly ;;
+    esac
+    say "ly enabled. Reboot (or restart the greeter service) to use it."
+}
+
+CURRENT_GREETER=$(detect_active_greeter || true)
+if [ "$WITH_LY" = ask ] && [ -t 0 ] && [ "$DISTRO" != debian ]; then
+    if [ -n "$CURRENT_GREETER" ] && [ "$CURRENT_GREETER" != ly ]; then
+        printf '%s? %sReplace your current greeter (%s) with ly?%s [y/N] ' "$C_Y" "$C_B" "$CURRENT_GREETER" "$C_RST"
+    else
+        printf '%s? %sInstall ly as your greeter?%s [y/N] ' "$C_Y" "$C_B" "$C_RST"
+    fi
+    read -r ans
+    case "$ans" in [yY]|[yY][eE][sS]) WITH_LY=yes ;; *) WITH_LY=no ;; esac
+fi
+[ "$WITH_LY" = yes ] && install_ly_greeter "$CURRENT_GREETER"
 
 # ---------- PATH sanity ----------
 case ":${PATH}:" in
