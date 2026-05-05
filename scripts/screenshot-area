@@ -1,0 +1,6 @@
+#!/bin/sh
+mkdir -p ~/Pictures/Screenshots
+FILE=~/Pictures/Screenshots/screenshot_$(date +%Y-%m-%d_%H-%M-%S).png
+SELECTION=$(slurp) || exit 1
+grim -g "$SELECTION" "$FILE"
+wl-copy --type image/png < "$FILE"

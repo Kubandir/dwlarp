@@ -1,0 +1,52 @@
+#!/bin/sh
+# Spawned from dwl -s, so WAYLAND_DISPLAY/XDG_RUNTIME_DIR are set.
+# Detached from dwl's stdout to free dwl's pipe (status feeder uses it).
+exec </dev/null >/dev/null 2>&1
+
+_restart() {
+    pkill -x "$1" 2>/dev/null
+    sleep 0.1
+    shift
+    "$@" &
+}
+
+# Export wayland env to dbus / systemd user so portals & spawned daemons see it.
+dbus-update-activation-environment --systemd \
+    DISPLAY WAYLAND_DISPLAY XDG_CURRENT_DESKTOP=dwl XDG_SESSION_TYPE=wayland 2>/dev/null
+
+# Audio — leave an existing PipeWire instance alone (systemd --user already
+# manages it on Debian/GNOME). Only start it if nothing is running and the
+# binaries exist.
+if ! pgrep -x pipewire >/dev/null 2>&1; then
+    if command -v pipewire >/dev/null 2>&1; then
+        _restart pipewire pipewire
+        sleep 0.3
+        command -v pipewire-pulse >/dev/null 2>&1 && _restart pipewire-pulse pipewire-pulse
+        command -v wireplumber  >/dev/null 2>&1 && _restart wireplumber  wireplumber
+    fi
+fi
+
+# Wallpaper, notifications
+WALL="${XDG_DATA_HOME:-$HOME/.local/share}/dwl/wallpaper.png"
+[ -f "$WALL" ] && command -v swaybg >/dev/null 2>&1 && _restart swaybg swaybg -i "$WALL" -m fill
+command -v mako >/dev/null 2>&1 && _restart mako mako
+
+# xdg-desktop-portal (file pickers, screen share). Path differs across distros.
+PORTAL_BIN=""
+PORTAL_GTK=""
+for p in /usr/libexec/xdg-desktop-portal /usr/lib/xdg-desktop-portal /usr/lib/x86_64-linux-gnu/xdg-desktop-portal; do
+    [ -x "$p" ] && PORTAL_BIN="$p" && break
+done
+for p in /usr/libexec/xdg-desktop-portal-gtk /usr/lib/xdg-desktop-portal-gtk /usr/lib/x86_64-linux-gnu/xdg-desktop-portal-gtk; do
+    [ -x "$p" ] && PORTAL_GTK="$p" && break
+done
+if [ -n "$PORTAL_BIN" ]; then
+    (
+        sleep 2
+        "$PORTAL_BIN" --replace &
+        if [ -n "$PORTAL_GTK" ]; then
+            sleep 0.5
+            "$PORTAL_GTK" --replace &
+        fi
+    ) &
+fi
