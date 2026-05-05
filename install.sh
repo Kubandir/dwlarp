@@ -256,6 +256,7 @@ install -Dm755 "$SRC/scripts/dwl-wallpaper"      "$HOME/.local/bin/dwl-wallpaper
 install -Dm755 "$SRC/scripts/dwl-autolayout"     "$HOME/.local/bin/dwl-autolayout"
 install -Dm755 "$SRC/scripts/dwl-watch-outputs"  "$HOME/.local/bin/dwl-watch-outputs"
 install -Dm755 "$SRC/scripts/screenshot-area"    "$HOME/.local/bin/screenshot-area"
+install -Dm755 "$SRC/scripts/bemenu-desktop"     "$HOME/.local/bin/bemenu-desktop"
 
 # Seed default layout policy (one word: above|below|left|right). Only if the
 # user has none — never clobber a manual choice.
