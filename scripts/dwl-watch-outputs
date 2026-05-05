@@ -16,6 +16,9 @@ while :; do
     if [ "$cur" != "$prev" ]; then
         prev=$cur
         "$HOME/.local/bin/dwl-autolayout" || true
+        # Poke leftstatus to re-emit immediately so the new bar on a freshly
+        # added output isn't blank until the next minute boundary.
+        pkill -USR1 -x dwlb-leftstatus 2>/dev/null || true
     fi
     sleep 1
 done

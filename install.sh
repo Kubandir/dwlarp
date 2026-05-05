@@ -122,7 +122,7 @@ install_deps_arch() {
         libxcb xcb-util-wm libdrm seatd hwdata libdisplay-info
         libpulse
         foot bemenu swaybg mako brightnessctl playerctl
-        grim slurp wl-clipboard wlr-randr imagemagick
+        grim slurp wl-clipboard wlr-randr imagemagick swaylock
         xdg-desktop-portal xdg-desktop-portal-gtk
         xorg-xwayland
         ttf-firacode-nerd ttf-nerd-fonts-symbols
@@ -149,7 +149,7 @@ install_deps_debian() {
         libdisplay-info-dev hwdata
         libpulse-dev
         foot bemenu swaybg mako-notifier brightnessctl playerctl
-        grim slurp wl-clipboard wlr-randr imagemagick
+        grim slurp wl-clipboard wlr-randr imagemagick swaylock
         xdg-desktop-portal xdg-desktop-portal-gtk
         xwayland
         fonts-firacode fonts-noto fonts-symbola
@@ -256,6 +256,13 @@ if [ ! -f "$LAYOUT_CFG" ]; then
     install -Dm644 /dev/null "$LAYOUT_CFG"
     printf 'above\n' > "$LAYOUT_CFG"
     say "seeded $LAYOUT_CFG (default: above — edit to below/left/right)"
+fi
+
+# swaylock theme matching dwl's teal palette. Only if user has none.
+SWAYLOCK_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/swaylock/config"
+if [ ! -f "$SWAYLOCK_CFG" ]; then
+    say "seeding swaylock theme → $SWAYLOCK_CFG"
+    install -Dm644 "$SRC/assets/swaylock.config" "$SWAYLOCK_CFG"
 fi
 
 say "installing dwl-session → /usr/local/bin (so greeters find it)"

@@ -91,6 +91,7 @@ static const Key keys[] = {
 	{ MODKEY,                     XKB_KEY_d,               spawn,             {.v = menucmd} },
 	{ MODKEY,                     XKB_KEY_s,               spawn,             {.v = firefoxcmd} },
 	{ MODKEY|WLR_MODIFIER_SHIFT,  XKB_KEY_S,               spawn,             SHCMD("$HOME/.local/bin/screenshot-area") },
+	{ MODKEY,                     XKB_KEY_l,               spawn,             SHCMD("swaylock") },
 
 	/* window management */
 	{ MODKEY,                     XKB_KEY_q,               killclient,        {0} },

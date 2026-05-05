@@ -53,6 +53,7 @@ int main(void) {
 
 	sigset_t mask; sigemptyset(&mask);
 	sigaddset(&mask, SIGTERM); sigaddset(&mask, SIGINT); sigaddset(&mask, SIGHUP);
+	sigaddset(&mask, SIGUSR1); /* external "repaint now" trigger (e.g. on hotplug) */
 	sigprocmask(SIG_BLOCK, &mask, NULL);
 	int sfd = signalfd(-1, &mask, SFD_CLOEXEC);
 	if (sfd < 0) return 1;
@@ -65,7 +66,15 @@ int main(void) {
 			if (errno == EINTR) continue;
 			return 1;
 		}
-		if (pfd[1].revents & POLLIN) return 0;
+		if (pfd[1].revents & POLLIN) {
+			struct signalfd_siginfo si;
+			if (read(sfd, &si, sizeof si) == (ssize_t)sizeof si
+			    && si.ssi_signo == SIGUSR1) {
+				emit();
+				continue;
+			}
+			return 0; /* TERM/INT/HUP */
+		}
 		if (pfd[0].revents & POLLIN) {
 			uint64_t exp;
 			(void)!read(tfd, &exp, sizeof exp);

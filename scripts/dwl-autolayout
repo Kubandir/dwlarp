@@ -47,8 +47,12 @@ repaint() {
     fi
 }
 
-# Single output (or no external): nothing to arrange — just repaint.
+# Single output (or no external). Pin whichever output we have to (0,0) so a
+# stale offset from a previous multi-monitor layout doesn't survive — without
+# this, dwl-wallpaper's bounding box stays huge and crops a tiny slice.
 if [ -z "${ENAME:-}" ] || [ -z "${INAME:-}" ]; then
+    only=${INAME:-${ENAME:-}}
+    [ -n "$only" ] && wlr-randr --output "$only" --pos 0,0 || true
     repaint
     exit 0
 fi
