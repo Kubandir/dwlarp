@@ -109,14 +109,14 @@ selection=$(
         --fn 'FiraCode Nerd Font Propo SemiBold 11' \
         --fixed-height --scrollbar none \
         -B 2 --bdr '#3a7268' \
-        --nb '#000000cc' --nf '#c8dde8' \
-        --ab '#000000cc' --af '#c8dde8' \
-        --tb '#000000cc' --tf '#5fa8a0' \
-        --fb '#000000cc' --ff '#e6e8ee' \
-        --hb '#1a3630cc' --hf '#d8f8f4' \
-        --sb '#000000cc' --sf '#c8dde8' \
-        --cb '#3a7268'   --cf '#000000' \
-        --scb '#000000cc' --scf '#c8dde8'
+        --nb '#0d1418dd' --nf '#c8dde8' \
+        --ab '#0d1418dd' --af '#c8dde8' \
+        --tb '#0d1418dd' --tf '#5fa8a0' \
+        --fb '#0d1418dd' --ff '#e6e8ee' \
+        --hb '#1e3a38ee' --hf '#d8f8f4' \
+        --sb '#0d1418dd' --sf '#c8dde8' \
+        --cb '#3a7268'   --cf '#0d1418' \
+        --scb '#0d1418dd' --scf '#c8dde8'
 )
 
 [ -z "$selection" ] && exit 0
