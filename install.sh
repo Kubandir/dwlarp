@@ -292,6 +292,13 @@ if [ ! -f "$FOOT_CFG" ]; then
     install -Dm644 "$SRC/assets/foot.ini" "$FOOT_CFG"
 fi
 
+# mako notification daemon — seed if absent.
+MAKO_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/mako/config"
+if [ ! -f "$MAKO_CFG" ]; then
+    say "seeding mako config → $MAKO_CFG"
+    install -Dm644 "$SRC/assets/mako.config" "$MAKO_CFG"
+fi
+
 # swaylock: render the template from config.h. Only seed if the user has no
 # config — never clobber a manual one.
 SWAYLOCK_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/swaylock/config"
