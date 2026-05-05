@@ -11,12 +11,10 @@
 #
 # Terminal apps open in $TERMINAL (default: foot).
 # Recent selections float to the top on next open.
-# App list is cached and only rebuilt when .desktop files change.
 
 TERMINAL="${TERMINAL:-foot}"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/bemenu-desktop"
 HISTORY="$CACHE/history"
-APPDB="$CACHE/apps"
 
 LOCAL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 SYS_DIR=/usr/share/applications
@@ -51,14 +49,7 @@ END {
 }
 '
 
-_needs_rebuild() {
-    [ -f "$APPDB" ] || return 0
-    find "$SYS_DIR" "$LOCAL_DIR" -name "*.desktop" -newer "$APPDB" -quit 2>/dev/null \
-        | grep -q .
-}
-
-_rebuild() {
-    # Local basenames that are hidden (NoDisplay/OnlyShowIn) — block system twins
+_build() {
     hidden=
     if [ -d "$LOCAL_DIR" ]; then
         for f in "$LOCAL_DIR"/*.desktop; do
@@ -68,7 +59,6 @@ _rebuild() {
         done
     fi
 
-    # Collect file lists: local first, then system (excluding hidden-overridden ones)
     local_files=
     [ -d "$LOCAL_DIR" ] && for f in "$LOCAL_DIR"/*.desktop; do
         [ -f "$f" ] && local_files="$local_files $f"
@@ -84,22 +74,20 @@ _rebuild() {
         done
     fi
 
-    # Single awk pass over all files, deduplicated by name
     # shellcheck disable=SC2086
     awk "$_AWK" $local_files $sys_files \
-        | sort | awk -F'\t' '!seen[$1]++' > "$APPDB.tmp" \
-        && mv "$APPDB.tmp" "$APPDB"
+        | sort | awk -F'\t' '!seen[$1]++'
 }
 
 mkdir -p "$CACHE"
-_needs_rebuild && _rebuild
+APPDB=$(_build)
 
 _menu() {
     if [ -f "$HISTORY" ]; then
-        awk -F'\t' 'NR==FNR{h[$0]=1;next} ($1 in h){print $1}' \
-            "$HISTORY" "$APPDB" | head -8
+        printf '%s\n' "$APPDB" | awk -F'\t' 'NR==FNR{h[$0]=1;next} ($1 in h){print $1}' \
+            "$HISTORY" - | head -8
     fi
-    awk -F'\t' '{print $1}' "$APPDB"
+    printf '%s\n' "$APPDB" | awk -F'\t' '{print $1}'
 }
 
 selection=$(
@@ -121,7 +109,7 @@ selection=$(
 
 [ -z "$selection" ] && exit 0
 
-entry=$(awk -F'\t' -v s="$selection" '$1==s{print;exit}' "$APPDB")
+entry=$(printf '%s\n' "$APPDB" | awk -F'\t' -v s="$selection" '$1==s{print;exit}')
 exec_cmd=$(printf '%s\n' "$entry" | cut -f2)
 is_term=$(printf '%s\n' "$entry" | cut -f3)
 [ -z "$exec_cmd" ] && exit 1
