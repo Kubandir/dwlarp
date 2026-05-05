@@ -310,8 +310,27 @@ install_ly_greeter() {
             $SUDO xbps-install -Sy ly || { warn "ly install failed"; return; } ;;
     esac
 
-    say "installing ly config → /etc/ly/config.ini"
-    $SUDO install -Dm644 "$SRC/assets/ly.config.ini" /etc/ly/config.ini
+    if [ -f /etc/ly/config.ini ]; then
+        say "ly config exists at /etc/ly/config.ini — leaving it alone"
+    else
+        say "installing default ly config → /etc/ly/config.ini"
+        $SUDO install -Dm644 "$SRC/assets/ly.config.ini" /etc/ly/config.ini
+    fi
+
+    # Pre-fill the username for the first boot. Pick the user invoking the
+    # install (or fall back to the lowest-uid regular user). Don't overwrite
+    # an existing save — ly will manage it from there on.
+    if [ ! -s /etc/ly/save.ini ]; then
+        primary=${SUDO_USER:-$(id -un)}
+        if [ "$primary" = root ]; then
+            primary=$(awk -F: '$3>=1000 && $3<60000 && $7!~"nologin|false" {print $1; exit}' /etc/passwd)
+        fi
+        if [ -n "$primary" ]; then
+            say "seeding ly autofill: user=$primary"
+            printf 'user=%s\nsession_index=0\n' "$primary" \
+                | $SUDO tee /etc/ly/save.ini >/dev/null
+        fi
+    fi
 
     # Enable ly, disable the previous greeter.
     case "$DISTRO" in
