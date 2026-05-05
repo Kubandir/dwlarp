@@ -1,0 +1,21 @@
+#!/bin/sh
+# dwl-watch-outputs — re-run dwl-autolayout when the set of enabled outputs
+# changes. Polls wlr-randr at 1Hz; cheap (microseconds) and protocol-stable.
+#
+# Triggers on output add/remove only — position changes do NOT retrigger
+# (otherwise dwl-autolayout's own writes would loop).
+
+set -eu
+
+prev=""
+while :; do
+    cur=$(wlr-randr 2>/dev/null | awk '
+        /^[^ \t]/      { n=$1 }
+        /Enabled: yes/ { print n }
+    ' | sort)
+    if [ "$cur" != "$prev" ]; then
+        prev=$cur
+        "$HOME/.local/bin/dwl-autolayout" || true
+    fi
+    sleep 1
+done

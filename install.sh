@@ -97,7 +97,7 @@ install_deps_void() {
         libseat-devel hwdata libdisplay-info-devel
         libpulse-devel
         foot bemenu swaybg mako brightnessctl playerctl
-        grim slurp wl-clipboard wlr-randr kanshi ImageMagick
+        grim slurp wl-clipboard wlr-randr ImageMagick
         xdg-desktop-portal xdg-desktop-portal-gtk
         xauth xorg-server-xwayland
         nerd-fonts-firacode noto-fonts-ttf
@@ -122,7 +122,7 @@ install_deps_arch() {
         libxcb xcb-util-wm libdrm seatd hwdata libdisplay-info
         libpulse
         foot bemenu swaybg mako brightnessctl playerctl
-        grim slurp wl-clipboard wlr-randr kanshi imagemagick
+        grim slurp wl-clipboard wlr-randr imagemagick
         xdg-desktop-portal xdg-desktop-portal-gtk
         xorg-xwayland
         ttf-firacode-nerd ttf-nerd-fonts-symbols
@@ -149,7 +149,7 @@ install_deps_debian() {
         libdisplay-info-dev hwdata
         libpulse-dev
         foot bemenu swaybg mako-notifier brightnessctl playerctl
-        grim slurp wl-clipboard wlr-randr kanshi imagemagick
+        grim slurp wl-clipboard wlr-randr imagemagick
         xdg-desktop-portal xdg-desktop-portal-gtk
         xwayland
         fonts-firacode fonts-noto fonts-symbola
@@ -243,16 +243,19 @@ make -C "$SRC/dwlb-leftstatus" PREFIX="$HOME/.local" install
 
 # ---------- install scripts, desktop entry, wallpaper ----------
 say "installing user scripts → ~/.local/bin"
-install -Dm755 "$SRC/scripts/dwl-autostart"   "$HOME/.local/bin/dwl-autostart"
-install -Dm755 "$SRC/scripts/dwl-wallpaper"   "$HOME/.local/bin/dwl-wallpaper"
-install -Dm755 "$SRC/scripts/screenshot-area" "$HOME/.local/bin/screenshot-area"
+install -Dm755 "$SRC/scripts/dwl-autostart"      "$HOME/.local/bin/dwl-autostart"
+install -Dm755 "$SRC/scripts/dwl-wallpaper"      "$HOME/.local/bin/dwl-wallpaper"
+install -Dm755 "$SRC/scripts/dwl-autolayout"     "$HOME/.local/bin/dwl-autolayout"
+install -Dm755 "$SRC/scripts/dwl-watch-outputs"  "$HOME/.local/bin/dwl-watch-outputs"
+install -Dm755 "$SRC/scripts/screenshot-area"    "$HOME/.local/bin/screenshot-area"
 
-KANSHI_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/kanshi/config"
-if [ ! -f "$KANSHI_CFG" ]; then
-    say "seeding kanshi config → $KANSHI_CFG (edit to taste)"
-    install -Dm644 "$SRC/assets/kanshi.config.example" "$KANSHI_CFG"
-else
-    say "kanshi config exists at $KANSHI_CFG — leaving it alone"
+# Seed default layout policy (one word: above|below|left|right). Only if the
+# user has none — never clobber a manual choice.
+LAYOUT_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/dwl/layout"
+if [ ! -f "$LAYOUT_CFG" ]; then
+    install -Dm644 /dev/null "$LAYOUT_CFG"
+    printf 'above\n' > "$LAYOUT_CFG"
+    say "seeded $LAYOUT_CFG (default: above — edit to below/left/right)"
 fi
 
 say "installing dwl-session → /usr/local/bin (so greeters find it)"

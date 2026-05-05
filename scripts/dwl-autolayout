@@ -1,0 +1,83 @@
+#!/bin/sh
+# dwl-autolayout — arrange outputs and repaint the wallpaper.
+#
+# Classifies outputs into "internal" (eDP-*, LVDS-*) and "external" (anything
+# else). Picks the largest external by area, places it relative to the
+# internal per the policy in:
+#
+#     ${XDG_CONFIG_HOME:-~/.config}/dwl/layout    one of: above below left right
+#
+# Default policy: above (external on top, internal centered below).
+#
+# Idempotent. Single-output systems are left alone (dwl's default placement is
+# fine when there's nothing to position relative to).
+
+set -eu
+
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/dwl/layout"
+POLICY=${DWL_LAYOUT:-}
+[ -z "$POLICY" ] && [ -r "$CONF" ] && POLICY=$(tr -d '[:space:]' < "$CONF")
+[ -z "$POLICY" ] && POLICY=above
+
+WALL=${DWL_WALLPAPER:-${XDG_DATA_HOME:-$HOME/.local/share}/dwl/wallpaper.png}
+
+# Pull all enabled outputs into shell vars: classify and pick the largest
+# external. awk does the parsing & decision in one shot, emits sh assignments.
+eval "$(wlr-randr | awk '
+    function flush() {
+        if (!en || !w || !h) return
+        if (n ~ /^(eDP|LVDS)/) { iname=n; iw=w; ih=h }
+        else if (w*h > ew*eh)  { ename=n; ew=w; eh=h }
+    }
+    /^[^ \t]/      { flush(); n=$1; en=0; w=0; h=0 }
+    /Enabled: yes/ { en=1 }
+    /current\)/    { split($1, m, "x"); w=m[1]+0; h=m[2]+0 }
+    END {
+        flush()
+        printf "INAME=%s\nIW=%d\nIH=%d\nENAME=%s\nEW=%d\nEH=%d\n",
+            iname, iw, ih, ename, ew, eh
+    }
+')"
+
+repaint() {
+    if [ -f "$WALL" ] && command -v dwl-wallpaper >/dev/null 2>&1; then
+        # Tiny delay so the compositor commits new positions before we
+        # query them again from inside dwl-wallpaper.
+        (sleep 0.2; dwl-wallpaper "$WALL") &
+    fi
+}
+
+# Single output (or no external): nothing to arrange — just repaint.
+if [ -z "${ENAME:-}" ] || [ -z "${INAME:-}" ]; then
+    repaint
+    exit 0
+fi
+
+# Compute positions. Whichever axis isn't the stack axis gets centered so the
+# smaller monitor is centered against the larger one.
+case "$POLICY" in
+    above)
+        if [ "$EW" -ge "$IW" ]; then ex=0; ix=$(( (EW - IW) / 2 ));
+        else                          ix=0; ex=$(( (IW - EW) / 2 )); fi
+        ey=0; iy=$EH ;;
+    below)
+        if [ "$EW" -ge "$IW" ]; then ex=0; ix=$(( (EW - IW) / 2 ));
+        else                          ix=0; ex=$(( (IW - EW) / 2 )); fi
+        iy=0; ey=$IH ;;
+    left)
+        if [ "$EH" -ge "$IH" ]; then ey=0; iy=$(( (EH - IH) / 2 ));
+        else                          iy=0; ey=$(( (IH - EH) / 2 )); fi
+        ex=0; ix=$EW ;;
+    right)
+        if [ "$EH" -ge "$IH" ]; then ey=0; iy=$(( (EH - IH) / 2 ));
+        else                          iy=0; ey=$(( (IH - EH) / 2 )); fi
+        ix=0; ex=$IW ;;
+    *)
+        echo "dwl-autolayout: unknown policy '$POLICY' (want: above|below|left|right)" >&2
+        exit 2 ;;
+esac
+
+wlr-randr --output "$ENAME" --pos "${ex},${ey}" \
+          --output "$INAME" --pos "${ix},${iy}"
+
+repaint
