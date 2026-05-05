@@ -1,24 +1,36 @@
 #!/bin/sh
 # Minimal .desktop app launcher for bemenu.
-# Replaces j4-dmenu-desktop with a self-contained POSIX script.
+# Self-contained — no j4-dmenu-desktop dependency.
 #
-# Filters:  OnlyShowIn= entries (DE-specific tools)
-#           NoDisplay=true entries (handlers, daemons)
-#           HardwareSettings / DesktopSettings categories (settings panels)
-#           X-XFCE / Screensaver / PackageManager categories
+# Filters:  OnlyShowIn= (DE-specific tools)
+#           NoDisplay=true (handlers, daemons)
+#           HardwareSettings / DesktopSettings / X-XFCE categories
 #
-# Local ~/.local/share/applications overrides system /usr/share/applications
-# (including NoDisplay=true overrides that hide system-visible entries).
+# Local ~/.local/share/applications overrides system /usr/share/applications,
+# including NoDisplay=true hiding of system-visible entries.
 #
-# Terminal apps launch inside $TERMINAL (default: foot).
+# Terminal apps open in $TERMINAL (default: foot).
 # Recent selections float to the top on next open.
+# App list is cached and only rebuilt when .desktop files change.
 
 TERMINAL="${TERMINAL:-foot}"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/bemenu-desktop"
 HISTORY="$CACHE/history"
+APPDB="$CACHE/apps"
 
-_awk_parse='
-BEGIN { in_entry=0; name=""; ex=""; term="false"; skip=0 }
+LOCAL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+SYS_DIR=/usr/share/applications
+
+# awk program: resets state at each new file (FNR==1), prints on transition
+# and in END. Handles multi-file single-invocation scanning.
+_AWK='
+FNR==1 {
+    if (name!="" && !skip && ex!="") {
+        gsub(/ ?%[a-zA-Z]/, "", ex)
+        printf "%s\t%s\t%s\n", name, ex, term
+    }
+    in_entry=0; name=""; ex=""; term="false"; skip=0
+}
 /^\[Desktop Entry\]/ { in_entry=1; next }
 /^\[/               { in_entry=0; next }
 !in_entry           { next }
@@ -28,71 +40,75 @@ BEGIN { in_entry=0; name=""; ex=""; term="false"; skip=0 }
 /^Categories=/ {
     if ($0 ~ /HardwareSettings|DesktopSettings|X-XFCE|Screensaver|PackageManager/) skip=1
 }
-/^Name=/ && name=="" { sub(/^Name=/, ""); name=$0 }
-/^Exec=/ && ex==""  { sub(/^Exec=/, ""); ex=$0 }
-/^Terminal=true/    { term="true" }
+/^Name=/ && name==""  { sub(/^Name=/, ""); name=$0 }
+/^Exec=/ && ex==""   { sub(/^Exec=/, ""); ex=$0 }
+/^Terminal=true/      { term="true" }
 END {
-    if (!skip && name!="" && ex!="") {
+    if (name!="" && !skip && ex!="") {
         gsub(/ ?%[a-zA-Z]/, "", ex)
         printf "%s\t%s\t%s\n", name, ex, term
     }
 }
 '
 
-_scan() {
-    local_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
-    sys_dir=/usr/share/applications
+_needs_rebuild() {
+    [ -f "$APPDB" ] || return 0
+    find "$SYS_DIR" "$LOCAL_DIR" -name "*.desktop" -newer "$APPDB" -quit 2>/dev/null \
+        | grep -q .
+}
 
-    # Collect basenames that the local dir hides (NoDisplay=true or OnlyShowIn=).
-    # These block the matching system entry from appearing.
-    hidden_local=
-    if [ -d "$local_dir" ]; then
-        for f in "$local_dir"/*.desktop; do
+_rebuild() {
+    # Local basenames that are hidden (NoDisplay/OnlyShowIn) — block system twins
+    hidden=
+    if [ -d "$LOCAL_DIR" ]; then
+        for f in "$LOCAL_DIR"/*.desktop; do
             [ -f "$f" ] || continue
             grep -qE "^(NoDisplay=true|OnlyShowIn=)" "$f" 2>/dev/null && \
-                hidden_local="$hidden_local $(basename "$f")"
+                hidden="$hidden $(basename "$f")"
         done
     fi
 
-    # Emit local apps (all non-hidden ones)
-    if [ -d "$local_dir" ]; then
-        for f in "$local_dir"/*.desktop; do
-            [ -f "$f" ] || continue
-            awk "$_awk_parse" "$f"
-        done
-    fi
+    # Collect file lists: local first, then system (excluding hidden-overridden ones)
+    local_files=
+    [ -d "$LOCAL_DIR" ] && for f in "$LOCAL_DIR"/*.desktop; do
+        [ -f "$f" ] && local_files="$local_files $f"
+    done
 
-    # Emit system apps, skipping any basename overridden locally
-    if [ -d "$sys_dir" ]; then
-        for f in "$sys_dir"/*.desktop; do
+    sys_files=
+    if [ -d "$SYS_DIR" ]; then
+        for f in "$SYS_DIR"/*.desktop; do
             [ -f "$f" ] || continue
             base=$(basename "$f")
-            case " $hidden_local " in *" $base "*) continue;; esac
-            awk "$_awk_parse" "$f"
+            case " $hidden " in *" $base "*) continue;; esac
+            sys_files="$sys_files $f"
         done
     fi
+
+    # Single awk pass over all files, deduplicated by name
+    # shellcheck disable=SC2086
+    awk "$_AWK" $local_files $sys_files \
+        | sort | awk -F'\t' '!seen[$1]++' > "$APPDB.tmp" \
+        && mv "$APPDB.tmp" "$APPDB"
 }
 
 mkdir -p "$CACHE"
-tmpdb=$(mktemp)
-trap 'rm -f "$tmpdb"' EXIT INT TERM
-_scan | sort | awk -F'\t' '!seen[$1]++' > "$tmpdb"
+_needs_rebuild && _rebuild
 
 _menu() {
     if [ -f "$HISTORY" ]; then
         awk -F'\t' 'NR==FNR{h[$0]=1;next} ($1 in h){print $1}' \
-            "$HISTORY" "$tmpdb" | head -8
+            "$HISTORY" "$APPDB" | head -8
     fi
-    awk -F'\t' '{print $1}' "$tmpdb"
+    awk -F'\t' '{print $1}' "$APPDB"
 }
 
 selection=$(
     _menu | awk '!seen[$0]++' | \
-    bemenu -i -c -W 0.28 -l 12 \
+    bemenu -i -c -W 0.23 -l 12 \
         -p 'run:' \
         --fn 'FiraCode Nerd Font Propo SemiBold 11' \
         --fixed-height --scrollbar none \
-        -B 1 -R 6 --bdr '#3a7268' \
+        -B 2 --bdr '#3a7268' \
         --nb '#000000cc' --nf '#c8dde8' \
         --ab '#000000cc' --af '#c8dde8' \
         --tb '#000000cc' --tf '#5fa8a0' \
@@ -105,7 +121,7 @@ selection=$(
 
 [ -z "$selection" ] && exit 0
 
-entry=$(awk -F'\t' -v s="$selection" '$1==s{print;exit}' "$tmpdb")
+entry=$(awk -F'\t' -v s="$selection" '$1==s{print;exit}' "$APPDB")
 exec_cmd=$(printf '%s\n' "$entry" | cut -f2)
 is_term=$(printf '%s\n' "$entry" | cut -f3)
 [ -z "$exec_cmd" ] && exit 1
