@@ -41,22 +41,17 @@ fi
 
 command -v mako >/dev/null 2>&1 && _restart mako mako
 
-# xdg-desktop-portal (file pickers, screen share). Path differs across distros.
-PORTAL_BIN=""
-PORTAL_GTK=""
-for p in /usr/libexec/xdg-desktop-portal /usr/lib/xdg-desktop-portal /usr/lib/x86_64-linux-gnu/xdg-desktop-portal; do
-    [ -x "$p" ] && PORTAL_BIN="$p" && break
-done
-for p in /usr/libexec/xdg-desktop-portal-gtk /usr/lib/xdg-desktop-portal-gtk /usr/lib/x86_64-linux-gnu/xdg-desktop-portal-gtk; do
-    [ -x "$p" ] && PORTAL_GTK="$p" && break
-done
-if [ -n "$PORTAL_BIN" ]; then
+# xdg-desktop-portal (file pickers, screen share). libexec path differs across distros.
+find_portal() {
+    for p in /usr/libexec/"$1" /usr/lib/"$1" /usr/lib/x86_64-linux-gnu/"$1"; do
+        [ -x "$p" ] && { echo "$p"; return; }
+    done
+}
+PORTAL=$(find_portal xdg-desktop-portal)
+PORTAL_GTK=$(find_portal xdg-desktop-portal-gtk)
+if [ -n "$PORTAL" ]; then
     (
-        sleep 2
-        "$PORTAL_BIN" --replace &
-        if [ -n "$PORTAL_GTK" ]; then
-            sleep 0.5
-            "$PORTAL_GTK" --replace &
-        fi
+        sleep 2; "$PORTAL" --replace &
+        [ -n "$PORTAL_GTK" ] && { sleep 0.5; "$PORTAL_GTK" --replace & }
     ) &
 fi

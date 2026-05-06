@@ -59,8 +59,8 @@ static const char *I_WIFI[4] = {
 	"\xf3\xb0\xa4\xa5","\xf3\xb0\xa4\xa8"
 };
 
-#define FG  "#ffffff"
-#define SEP "#7a808b"
+#define FG   WS_STATUS_FG
+#define SEP  WS_STATUS_SEP
 
 /* ---------- cached state ---------- */
 static int  cached_cpu_t   = 0;        /* CPU% × 10 */
@@ -364,9 +364,9 @@ static void on_tick(pa_mainloop_api *a, pa_io_event *e, int fd,
 	sample_cpu();
 	sample_cpu_temp();
 	sample_bri();
-	if (tick_n %   5 == 0) sample_wifi();
-	if (tick_n %  30 == 0) sample_bat();
-	if (tick_n % 300 == 0) sample_disk();
+	if (tick_n % WS_STATUS_CADENCE_WIFI == 0) sample_wifi();
+	if (tick_n % WS_STATUS_CADENCE_BAT  == 0) sample_bat();
+	if (tick_n % WS_STATUS_CADENCE_DISK == 0) sample_disk();
 	render();
 	tick_n++;
 }

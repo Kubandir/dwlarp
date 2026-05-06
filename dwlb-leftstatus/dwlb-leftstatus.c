@@ -11,6 +11,8 @@
  * Build:  cc -O2 -Wall -o dwlb-leftstatus dwlb-leftstatus.c
  */
 
+#include "../config.h"
+
 #include <errno.h>
 #include <poll.h>
 #include <signal.h>
@@ -22,9 +24,9 @@
 #include <time.h>
 #include <unistd.h>
 
-#define LOGO    "\xef\x8c\xae"   /* nf-linux-void U+F32E */
-#define FG      "#ffffff"
-#define DATE_FG "#cfd3da"
+#define LOGO    WS_LEFTST_LOGO
+#define FG      WS_LEFTST_FG
+#define DATE_FG WS_LEFTST_DATE_FG
 
 static void emit(void) {
 	time_t now = time(NULL);

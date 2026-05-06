@@ -1,4 +1,5 @@
-/* User-facing knobs (font, bar colors) live in the repo-root config.h. */
+/* User-facing knobs live in the repo-root config.h.
+ * This file wires those macros into dwlb's internal settings. */
 #include "../config.h"
 
 #define HEX_COLOR(hex)				\
@@ -7,18 +8,18 @@
 	  .blue  = ((hex >> 8) & 0xff) * 257,	\
 	  .alpha = (hex & 0xff) * 257 }
 
-static bool ipc = true;
-static bool hidden = false;
-static bool bottom = false;
-static bool hide_vacant = true;
-static uint32_t vertical_padding = 5;
+static bool ipc             = true;
+static bool hidden          = false;
+static bool bottom          = false;
+static bool hide_vacant     = WS_BAR_HIDE_VACANT;
+static uint32_t vertical_padding = WS_BAR_VPADDING;
 static bool status_commands = true;
-static bool center_title = true;
-static bool custom_title = true;
+static bool center_title    = WS_BAR_CENTER_TITLE;
+static bool custom_title    = true;
 static bool active_color_title = false;
-static uint32_t buffer_scale = 1;
-static char *fontstr = WS_BAR_FONT;
-static char *tags_names[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
+static uint32_t buffer_scale   = WS_BAR_SCALE;
+static char *fontstr        = WS_BAR_FONT;
+static char *tags_names[]   = { WS_TAG_NAMES };
 
 static pixman_color_t active_fg_color          = HEX_COLOR(WS_BAR_FG);
 static pixman_color_t active_bg_color          = HEX_COLOR(WS_BAR_ACTIVE_BG);

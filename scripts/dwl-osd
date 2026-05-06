@@ -1,0 +1,139 @@
+#!/bin/sh
+# Volume / brightness OSD bridge for mako.
+#
+# Cached "<pct> <muted>" with a short TTL keeps wpctl forks off the hot
+# path under key-repeat: each step does shell arithmetic and one absolute
+# `wpctl set-volume X%`. mako already replaces in place via
+# x-canonical-private-synchronous:dwl-osd, so we don't coalesce here.
+#
+# Usage:
+#   dwl-osd volume up|down|mute
+#   dwl-osd mic mute
+#   dwl-osd brightness up|down
+
+set -eu
+
+STEP=${DWL_OSD_STEP:-5}
+VOL_CAP=${DWL_OSD_VOL_CAP:-150}
+TIMEOUT=${DWL_OSD_TIMEOUT:-1200}
+
+RUNDIR=${XDG_RUNTIME_DIR:-/tmp}
+CACHE_VOL=$RUNDIR/dwl-osd.vol     # "<pct> <muted>"
+CACHE_MIC=$RUNDIR/dwl-osd.mic     # "<muted>"
+TTL=5
+
+# Nerd Font glyphs (Font Awesome range, present in FiraCode Nerd Font)
+V_HI=$(printf    '\357\200\250')
+V_OFF=$(printf   '\357\200\246')
+SUN=$(printf     '\357\206\205')
+MIC=$(printf     '\357\204\260')
+MIC_OFF=$(printf '\357\204\261')
+
+fresh() {
+	[ -f "$1" ] || return 1
+	[ "$(( $(date +%s) - $(stat -c %Y "$1" 2>/dev/null || echo 0) ))" -lt "$TTL" ]
+}
+
+# notify [-c CATEGORY] TITLE [PERCENT]
+notify() {
+	cat=
+	[ "${1:-}" = -c ] && { cat=$2; shift 2; }
+	title=$1 pct=${2-}
+	set -- -a dwl-osd -t "$TIMEOUT" -u low \
+	       -h string:x-canonical-private-synchronous:dwl-osd
+	[ -n "$cat" ] && set -- "$@" -c "$cat"
+	[ -n "$pct" ] && set -- "$@" -h "int:value:$pct"
+	notify-send "$@" "$title" </dev/null >/dev/null 2>&1 &
+}
+
+# ---- volume ----------------------------------------------------------
+
+vol_seed() {
+	if fresh "$CACHE_VOL"; then cat "$CACHE_VOL"; return; fi
+	state=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null) || { echo "0 0"; return; }
+	case "$state" in *MUTED*) m=1 ;; *) m=0 ;; esac
+	p=$(printf '%s\n' "$state" | awk '{ printf "%d", $2*100+0.5 }')
+	printf '%s %s\n' "$p" "$m"
+}
+vol_save() { printf '%s %s\n' "$1" "$2" > "$CACHE_VOL"; }
+
+vol_step() {
+	dir=$1
+	set -- $(vol_seed); pct=$1; muted=$2
+	new=$(( pct + dir * STEP ))
+	[ "$new" -lt 0 ]          && new=0
+	[ "$new" -gt "$VOL_CAP" ] && new=$VOL_CAP
+	[ "$muted" = 1 ] && wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 >/dev/null 2>&1 || true
+	wpctl set-volume @DEFAULT_AUDIO_SINK@ "${new}%" >/dev/null 2>&1 || true
+	vol_save "$new" 0
+	notify "Volume  $V_HI" "$new"
+}
+
+vol_mute() {
+	wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle >/dev/null 2>&1 || true
+	set -- $(vol_seed); pct=$1; muted=$2
+	[ "$muted" = 1 ] && muted=0 || muted=1
+	vol_save "$pct" "$muted"
+	if [ "$muted" = 1 ]; then
+		notify -c muted "Volume  $V_OFF  muted" "$pct"
+	else
+		notify "Volume  $V_HI" "$pct"
+	fi
+}
+
+# ---- microphone ------------------------------------------------------
+
+mic_mute() {
+	wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle >/dev/null 2>&1 || true
+	if fresh "$CACHE_MIC"; then
+		m=$(cat "$CACHE_MIC")
+		[ "$m" = 1 ] && m=0 || m=1
+	else
+		state=$(wpctl get-volume @DEFAULT_AUDIO_SOURCE@ 2>/dev/null || echo "")
+		case "$state" in *MUTED*) m=1 ;; *) m=0 ;; esac
+	fi
+	echo "$m" > "$CACHE_MIC"
+	if [ "$m" = 1 ]; then notify -c muted "Microphone  $MIC_OFF  muted"
+	else                  notify "Microphone  $MIC"
+	fi
+}
+
+# ---- brightness ------------------------------------------------------
+# Up: +5% to 100. Down: -5% to 5%, then 4 → 3 → 2 → 1, stop.
+
+bri_step() {
+	dir=$1
+	cur=$(brightnessctl get); max=$(brightnessctl max)
+	pct=$(( cur * 100 / max ))
+	if [ "$dir" -gt 0 ]; then
+		[ "$pct" -ge 100 ] && return
+		[ "$pct" -lt 5 ] && new=$(( pct + 1 )) || new=$(( pct + 5 ))
+		[ "$new" -gt 100 ] && new=100
+	else
+		[ "$pct" -le 1 ] && return
+		[ "$pct" -le 5 ] && new=$(( pct - 1 )) || new=$(( pct - 5 ))
+	fi
+	brightnessctl set "${new}%" >/dev/null
+	notify "Brightness  $SUN" "$new"
+}
+
+# ---- dispatch --------------------------------------------------------
+
+case "${1:-}" in
+	volume) case "${2:-}" in
+		up)   vol_step  1 ;;
+		down) vol_step -1 ;;
+		mute) vol_mute    ;;
+		*) echo "usage: $0 volume up|down|mute" >&2; exit 2 ;;
+	esac ;;
+	mic) case "${2:-}" in
+		mute) mic_mute ;;
+		*) echo "usage: $0 mic mute" >&2; exit 2 ;;
+	esac ;;
+	brightness) case "${2:-}" in
+		up)   bri_step  1 ;;
+		down) bri_step -1 ;;
+		*) echo "usage: $0 brightness up|down" >&2; exit 2 ;;
+	esac ;;
+	*) echo "usage: $0 {volume up|down|mute | mic mute | brightness up|down}" >&2; exit 2 ;;
+esac

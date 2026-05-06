@@ -1,5 +1,5 @@
 #!/bin/sh
-# Minimal .desktop app launcher for bemenu.
+# Minimal .desktop app launcher piped into dmenu-wayland (dmenu-wl).
 # Self-contained — no j4-dmenu-desktop dependency.
 #
 # Filters:  OnlyShowIn= (DE-specific tools)
@@ -11,16 +11,17 @@
 #
 # Terminal apps open in $TERMINAL (default: foot).
 # Recent selections float to the top on next open.
+#
+# Look replicates Kubandir/suckless dmenu (JetBrainsMonoNL 14, "run:" prompt,
+# tall-line top bar) with this rice's teal palette: #9c98d5 → #3a7268.
 
 TERMINAL="${TERMINAL:-foot}"
-CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/bemenu-desktop"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/dmenu-launcher"
 HISTORY="$CACHE/history"
 
 LOCAL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 SYS_DIR=/usr/share/applications
 
-# awk program: resets state at each new file (FNR==1), prints on transition
-# and in END. Handles multi-file single-invocation scanning.
 _AWK='
 FNR==1 {
     if (name!="" && !skip && ex!="") {
@@ -90,21 +91,18 @@ _menu() {
     printf '%s\n' "$APPDB" | awk -F'\t' '{print $1}'
 }
 
+# Match the dwlb bar exactly: same font (FiraCode Nerd Font bold size 11),
+# same bg (#000000cc — matches WS_BAR_BG), and the workspace-active gray
+# (#2a2f3acc — matches WS_BAR_ACTIVE_BG) for the selected entry highlight.
+# Patched dmenu-wl renders with exclusive_zone=-1 so this surface overlaps
+# the bar instead of stacking under it.
 selection=$(
     _menu | awk '!seen[$0]++' | \
-    bemenu -i -c -W 0.23 -l 12 \
-        -p 'run:' \
-        --fn 'FiraCode Nerd Font Propo SemiBold 11' \
-        --fixed-height --scrollbar none \
-        -B 2 --bdr '#3a7268' \
-        --nb '#0d1418dd' --nf '#c8dde8' \
-        --ab '#0d1418dd' --af '#c8dde8' \
-        --tb '#0d1418dd' --tf '#5fa8a0' \
-        --fb '#0d1418dd' --ff '#e6e8ee' \
-        --hb '#1e3a38ee' --hf '#d8f8f4' \
-        --sb '#0d1418dd' --sf '#c8dde8' \
-        --cb '#3a7268'   --cf '#0d1418' \
-        --scb '#0d1418dd' --scf '#c8dde8'
+    dmenu-wl -i -p 'run:' \
+        -fn 'FiraCode Nerd Font Bold 11' \
+        -h 28 \
+        -nb '#000000' -nf '#ffffff' \
+        -sb '#2a2f3a' -sf '#ffffff'
 )
 
 [ -z "$selection" ] && exit 0

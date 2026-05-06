@@ -363,6 +363,7 @@ static void dwl_ipc_output_set_layout(struct wl_client *client, struct wl_resour
 static void dwl_ipc_output_set_tags(struct wl_client *client, struct wl_resource *resource, uint32_t tagmask, uint32_t toggle_tagset);
 static void dwl_ipc_output_release(struct wl_client *client, struct wl_resource *resource);
 static void tag(const Arg *arg);
+static void tagandview(const Arg *arg);
 static void tagmon(const Arg *arg);
 static void tile(Monitor *m);
 static void togglebar(const Arg *arg);
@@ -2665,6 +2666,7 @@ update_move_preview(double cur_x, double cur_y)
 
 	wlr_scene_node_set_position(&move_preview->node, p.x, p.y);
 	wlr_scene_node_set_enabled(&move_preview->node, 1);
+	wlr_scene_node_raise_to_top(&move_preview->node);
 }
 
 void
@@ -3032,7 +3034,7 @@ setup(void)
 	resize_preview_h = wlr_scene_rect_create(layers[LyrOverlay], 0, 0, resizepreviewcolor);
 	wlr_scene_node_set_enabled(&resize_preview_h->node, 0);
 
-	move_preview = wlr_scene_tree_create(layers[LyrTile]);
+	move_preview = wlr_scene_tree_create(layers[LyrOverlay]);
 	move_preview_bg = wlr_scene_rect_create(move_preview, 0, 0, movepreviewbgcolor);
 	for (i = 0; i < 4; i++)
 		move_preview_border[i] = wlr_scene_rect_create(move_preview, 0, 0, movepreviewbordercolor);
@@ -3166,6 +3168,13 @@ tag(const Arg *arg)
 	focusclient(focustop(selmon), 1);
 	arrange(selmon);
 	printstatus();
+}
+
+void
+tagandview(const Arg *arg)
+{
+	tag(arg);
+	view(arg);
 }
 
 void

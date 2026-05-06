@@ -7,7 +7,7 @@ detects the existing PipeWire stack and leaves it alone.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Kubandir/wayland-suckless/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Kubandir/wayland-suckless/main/install.sh | sh
 ```
 
 Or clone and run:
@@ -18,9 +18,20 @@ cd wayland-suckless
 ./install.sh
 ```
 
-Flags: `--skip-deps`, `--skip-build`, `--branch <ref>`, `--local`.
-
 After it finishes, log out, pick **dwl** at the display manager, log in.
+
+## Flags
+
+| Flag                 | Effect                                               |
+| -------------------- | ---------------------------------------------------- |
+| `--rebuild` / `-r`   | Rebuild C projects + reinstall scripts. Nothing else.|
+| `--skip-deps` / `-d` | Don't touch distro packages.                         |
+| `-y`                 | Non-interactive.                                     |
+| `-h`                 | Help.                                                |
+
+Optional env vars:
+
+- `WITH_LY=1` — install + enable the [ly](https://github.com/fairyglade/ly) greeter (Arch/Void only).
 
 ## What it installs
 
@@ -34,6 +45,10 @@ After it finishes, log out, pick **dwl** at the display manager, log in.
 | `~/.local/bin/dwlb-status` / `dwlb-leftstatus`| status feeders                      |
 | `~/.local/bin/screenshot-area`                | grim+slurp helper                   |
 | `~/.local/share/dwl/wallpaper.png`            | shipped wallpaper                   |
+
+A web browser is **not** installed — the `Win+S` keybind launches whatever
+`WS_BROWSER_CMD` is set to in `config.h` (default: `helium`). Edit it to
+`firefox` or `chromium` if you prefer, then `./install.sh --rebuild`.
 
 ## wlroots
 
@@ -52,18 +67,19 @@ launches PipeWire if nothing is running and the binaries exist.
 
 ## Configuration
 
-Edit `dwl/config.h` and re-run `./install.sh --skip-deps`. dwl is statically
-configured at compile time — that's the suckless way.
+Edit `config.h` at the repo root and re-run `./install.sh --rebuild`. dwl is
+statically configured at compile time — that's the suckless way.
 
 ## Layout
 
 ```
 install.sh
+config.h              # single user-facing config; everything reads from here
 dwl/                  # dwl 0.8 + btrtile + dwl-ipc-unstable-v2
 dwlb/                 # bar with IPC + leftstatus extension
 dwlb-status/          # libpulse-driven status feeder (1s tick, idle ~0% CPU)
 dwlb-leftstatus/      # logo + clock, minute-aligned via timerfd
-scripts/              # dwl-session, dwl-autostart, screenshot-area
+scripts/              # dwl-session, dwl-autostart, dwl-osd, dmenu-launcher, …
 desktop/              # dwl.desktop
-assets/               # wallpaper.png
+assets/               # wallpaper, foot/mako/swaylock/ly templates
 ```
