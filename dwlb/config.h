@@ -10,7 +10,7 @@
 
 static bool ipc             = true;
 static bool hidden          = false;
-static bool bottom          = false;
+static bool bottom          = WS_BAR_BOTTOM;
 static bool hide_vacant     = WS_BAR_HIDE_VACANT;
 static uint32_t vertical_padding = WS_BAR_VPADDING;
 static bool status_commands = true;

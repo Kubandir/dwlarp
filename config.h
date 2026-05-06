@@ -58,9 +58,28 @@
 
 /* ------------------------------------------------------------
  * KEYBOARD
+ *
+ * WS_KBD_LAYOUT — XKB layout. A single layout, OR a comma-separated
+ *   list of layouts to load simultaneously. The first is initial.
+ *     "cz"          single layout
+ *     "cz,us"       cz initial + us, switchable
+ *     "cz,us,de"    three layouts, cycled in order
+ *
+ * WS_KBD_OPTIONS — XKB options string, NULL for none. Multiple
+ *   options separated by commas. Common ones:
+ *     "grp:win_space_toggle"   Win+Space cycles layouts
+ *     "grp:alt_shift_toggle"   Alt+Shift cycles layouts
+ *     "grp:caps_toggle"        Caps Lock cycles layouts
+ *     "grp:menu_toggle"        Menu key cycles layouts
+ *     "ctrl:nocaps"            map Caps Lock to Ctrl
+ *   Combine: "grp:win_space_toggle,ctrl:nocaps"
+ *
+ * Workspace shortcuts (Win+1..9) are bound for both Czech and US
+ * keyboard physical layouts in dwl/config.h, so they keep working
+ * when you swap WS_KBD_LAYOUT or toggle between layouts at runtime.
  * ------------------------------------------------------------ */
-#define WS_KBD_LAYOUT         "cz"   /* XKB layout (e.g. "us", "de", "gb") */
-#define WS_KBD_OPTIONS        NULL   /* XKB options, e.g. "ctrl:nocaps", or NULL */
+#define WS_KBD_LAYOUT         "cz,us"
+#define WS_KBD_OPTIONS        "grp:win_space_toggle"
 #define WS_KEY_REPEAT_RATE    50     /* key repeats per second while held */
 #define WS_KEY_REPEAT_DELAY   200    /* milliseconds before repeat begins */
 
@@ -77,6 +96,7 @@
 /* ------------------------------------------------------------
  * BAR (dwlb)
  * ------------------------------------------------------------ */
+#define WS_BAR_BOTTOM        0    /* 0 = bar at top, 1 = at bottom */
 #define WS_BAR_HIDE_VACANT   1    /* 1 = hide tag slots with no windows */
 #define WS_BAR_VPADDING      5    /* vertical padding above/below text (pixels) */
 #define WS_BAR_CENTER_TITLE  1    /* 1 = center window title in middle segment */
@@ -88,6 +108,17 @@
 /* Left-status logo glyph (default: nf-linux-void U+F32E).
  * Any single Nerd Font glyph works here. */
 #define WS_LEFTST_LOGO  "\xef\x8c\xae"
+
+/* Clock + date strftime formats (left status). Examples:
+ *   "%H:%M"         24-hour, leading zero  (default)
+ *   "%I:%M %p"      12-hour with AM/PM
+ *   "%H:%M:%S"      with seconds (still updates only once per minute)
+ *   "%b %d"         "Jan 05"  (default)
+ *   "%a %d.%m."     "Mon 05.01."  (european)
+ *   "%Y-%m-%d"      "2026-01-05"
+ */
+#define WS_TIME_FMT     "%H:%M"
+#define WS_DATE_FMT     "%b %d"
 
 /* ------------------------------------------------------------
  * STATUS MODULES  (1 = show, 0 = hide)
@@ -113,6 +144,7 @@
 #define WS_EDITOR_CMD     "code"
 #define WS_LOCK_CMD       "swaylock"
 #define WS_SCREENSHOT_CMD "$HOME/.local/bin/screenshot-area"
+#define WS_OSD_CMD        "$HOME/.local/bin/dwl-osd"   /* volume/brightness/mic OSD */
 
 /* ------------------------------------------------------------
  * KEYBINDS

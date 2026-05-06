@@ -26,7 +26,7 @@ static const float rootcolor[]             = COLOR(WS_BG);
 static const float bordercolor[]           = COLOR(WS_BORDER);
 static const float focuscolor[]            = COLOR(WS_FOCUS);
 static const float urgentcolor[]           = COLOR(WS_URGENT);
-static const float fullscreen_bg[]         = {0.0f, 0.0f, 0.0f, 1.0f};
+static const float fullscreen_bg[]         = COLOR(WS_BG);
 static const float resizepreviewcolor[]    = COLOR_ALPHA(WS_FOCUS, 0xcc);
 static const unsigned int resizepreviewpx  = 2;
 static const float movepreviewbordercolor[]= COLOR_ALPHA(WS_FOCUS, 0xcc);
@@ -86,12 +86,28 @@ static const enum libinput_config_tap_button_map button_map   = LIBINPUT_CONFIG_
 /* MODKEY comes from WS_MOD in the root config.h. */
 #define MODKEY WS_MOD
 
-/* Czech QWERTZ: unshifted number row → shifted number row.
- * Win+Number switches to workspace; Win+Shift+Number moves the focused
- * window there and follows it (tagandview). */
-#define TAGKEYS(KEY,SKEY,TAG) \
-	{ MODKEY,                    KEY,   view,       {.ui = 1 << TAG} }, \
-	{ MODKEY|WLR_MODIFIER_SHIFT, SKEY,  tagandview, {.ui = 1 << TAG} }
+/* Layout-agnostic workspace shortcuts.
+ *
+ * Win+1..9 must work whether the active XKB layout is "cz", "us", or
+ * both at once (see WS_KBD_LAYOUT). The same physical key 1 produces
+ * different keysyms per layout/shift combo:
+ *
+ *                  | unshifted | shifted
+ *   cz layout      |   plus    |   1
+ *   us layout      |    1      |   exclam
+ *
+ * To cover all four cases per tag we bind three keysyms:
+ *   CZ  — Czech unshifted (e.g. plus, ecaron)
+ *   DIG — the digit (1..9): matches us-unshifted AND cz-shifted
+ *   US  — US shifted (e.g. exclam, at, numbersign)
+ *
+ * Result: Win+N views tag N; Win+Shift+N moves+follows. Both work
+ * under cz-only, us-only, or cz+us toggled at runtime. */
+#define TAGKEYS(CZ,DIG,US,TAG) \
+	{ MODKEY,                    CZ,  view,       {.ui = 1 << TAG} }, \
+	{ MODKEY,                    DIG, view,       {.ui = 1 << TAG} }, \
+	{ MODKEY|WLR_MODIFIER_SHIFT, DIG, tagandview, {.ui = 1 << TAG} }, \
+	{ MODKEY|WLR_MODIFIER_SHIFT, US,  tagandview, {.ui = 1 << TAG} }
 
 #define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
 
@@ -131,24 +147,25 @@ static const Key keys[] = {
 	{ MODKEY|WLR_MODIFIER_SHIFT,  XKB_KEY_Up,              setratio_v,        {.f = -0.025f} },
 	{ MODKEY|WLR_MODIFIER_SHIFT,  XKB_KEY_Down,            setratio_v,        {.f = +0.025f} },
 
-	/* workspaces — Czech QWERTZ number row (unshifted → shifted = digit) */
-	TAGKEYS(XKB_KEY_plus,         XKB_KEY_1,               0),
-	TAGKEYS(XKB_KEY_ecaron,       XKB_KEY_2,               1),
-	TAGKEYS(XKB_KEY_scaron,       XKB_KEY_3,               2),
-	TAGKEYS(XKB_KEY_ccaron,       XKB_KEY_4,               3),
-	TAGKEYS(XKB_KEY_rcaron,       XKB_KEY_5,               4),
-	TAGKEYS(XKB_KEY_zcaron,       XKB_KEY_6,               5),
-	TAGKEYS(XKB_KEY_yacute,       XKB_KEY_7,               6),
-	TAGKEYS(XKB_KEY_aacute,       XKB_KEY_8,               7),
-	TAGKEYS(XKB_KEY_iacute,       XKB_KEY_9,               8),
+	/* workspaces — covers cz QWERTZ + us QWERTY (see TAGKEYS comment) */
+	/*       cz unshifted          digit         us shifted              tag */
+	TAGKEYS( XKB_KEY_plus,         XKB_KEY_1,    XKB_KEY_exclam,          0 ),
+	TAGKEYS( XKB_KEY_ecaron,       XKB_KEY_2,    XKB_KEY_at,              1 ),
+	TAGKEYS( XKB_KEY_scaron,       XKB_KEY_3,    XKB_KEY_numbersign,      2 ),
+	TAGKEYS( XKB_KEY_ccaron,       XKB_KEY_4,    XKB_KEY_dollar,          3 ),
+	TAGKEYS( XKB_KEY_rcaron,       XKB_KEY_5,    XKB_KEY_percent,         4 ),
+	TAGKEYS( XKB_KEY_zcaron,       XKB_KEY_6,    XKB_KEY_asciicircum,     5 ),
+	TAGKEYS( XKB_KEY_yacute,       XKB_KEY_7,    XKB_KEY_ampersand,       6 ),
+	TAGKEYS( XKB_KEY_aacute,       XKB_KEY_8,    XKB_KEY_asterisk,        7 ),
+	TAGKEYS( XKB_KEY_iacute,       XKB_KEY_9,    XKB_KEY_parenleft,       8 ),
 
 	/* laptop function keys (no modifier) */
-	{ 0, XKB_KEY_XF86AudioRaiseVolume,  spawn, SHCMD("$HOME/.local/bin/dwl-osd volume up") },
-	{ 0, XKB_KEY_XF86AudioLowerVolume,  spawn, SHCMD("$HOME/.local/bin/dwl-osd volume down") },
-	{ 0, XKB_KEY_XF86AudioMute,         spawn, SHCMD("$HOME/.local/bin/dwl-osd volume mute") },
-	{ 0, XKB_KEY_XF86AudioMicMute,      spawn, SHCMD("$HOME/.local/bin/dwl-osd mic mute") },
-	{ 0, XKB_KEY_XF86MonBrightnessUp,   spawn, SHCMD("$HOME/.local/bin/dwl-osd brightness up") },
-	{ 0, XKB_KEY_XF86MonBrightnessDown, spawn, SHCMD("$HOME/.local/bin/dwl-osd brightness down") },
+	{ 0, XKB_KEY_XF86AudioRaiseVolume,  spawn, SHCMD(WS_OSD_CMD " volume up") },
+	{ 0, XKB_KEY_XF86AudioLowerVolume,  spawn, SHCMD(WS_OSD_CMD " volume down") },
+	{ 0, XKB_KEY_XF86AudioMute,         spawn, SHCMD(WS_OSD_CMD " volume mute") },
+	{ 0, XKB_KEY_XF86AudioMicMute,      spawn, SHCMD(WS_OSD_CMD " mic mute") },
+	{ 0, XKB_KEY_XF86MonBrightnessUp,   spawn, SHCMD(WS_OSD_CMD " brightness up") },
+	{ 0, XKB_KEY_XF86MonBrightnessDown, spawn, SHCMD(WS_OSD_CMD " brightness down") },
 	{ 0, XKB_KEY_XF86AudioPlay,  spawn, SHCMD("playerctl play-pause") },
 	{ 0, XKB_KEY_XF86AudioPause, spawn, SHCMD("playerctl play-pause") },
 	{ 0, XKB_KEY_XF86AudioNext,  spawn, SHCMD("playerctl next") },

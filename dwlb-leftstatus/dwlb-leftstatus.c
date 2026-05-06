@@ -32,9 +32,9 @@ static void emit(void) {
 	time_t now = time(NULL);
 	struct tm tm;
 	localtime_r(&now, &tm);
-	char hm[8], date[16];
-	strftime(hm,   sizeof hm,   "%H:%M", &tm);
-	strftime(date, sizeof date, "%b %d", &tm);
+	char hm[32], date[64];
+	strftime(hm,   sizeof hm,   WS_TIME_FMT, &tm);
+	strftime(date, sizeof date, WS_DATE_FMT, &tm);
 	printf("^fg(" FG ")  " LOGO "    ^fg(" FG ")%s    ^fg(" DATE_FG ")%s    \n",
 	       hm, date);
 	fflush(stdout);
