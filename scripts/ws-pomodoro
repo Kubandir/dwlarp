@@ -1,0 +1,385 @@
+#!/bin/sh
+# ws-pomodoro — suckless pomodoro timer wired to mako + kew.
+#
+# Default cycle: 30 min work / 30 min break, repeating. Music (kew, shuffled
+# from $HOME/important/music) plays during work and pauses during break.
+#
+# Architecture:
+#   - one daemon process ticks once per second, owns timer state, drives
+#     mako notifications and music transitions
+#   - the menu front-end (Win+p) appends commands to a queue file and
+#     pokes the daemon with SIGUSR1; the daemon's signal handler drains
+#     the queue. State is also dumped to a plain file so the menu can
+#     render context-sensitive entries
+#
+# Subcommands:
+#   ws-pomodoro daemon           run the tick loop (one-only)
+#   ws-pomodoro menu             open the dmenu front-end (Win+p)
+#   ws-pomodoro start            begin a session (auto-spawns daemon)
+#   ws-pomodoro end              end session, show recap, stop daemon
+#   ws-pomodoro pause            pause current stage (persistent notif)
+#   ws-pomodoro resume           leave pause
+#   ws-pomodoro add              +10 minutes to current stage
+#   ws-pomodoro sub              -10 minutes from current stage (min 1)
+#   ws-pomodoro skip             jump to next stage
+#   ws-pomodoro status           print one-line state (debugging)
+
+set -eu
+
+WORK_SECS=1800     # 30 min
+BREAK_SECS=1800    # 30 min
+STEP_SECS=600      # +/- 10 min
+MUSIC_DIR="$HOME/important/music"
+
+RUN="${XDG_RUNTIME_DIR:-/tmp}/ws-pomodoro"
+STATE="$RUN/state"
+QUEUE="$RUN/queue"
+PIDFILE="$RUN/pid"
+
+NOTIF_PAUSE_ID="ws-pomo-paused"
+NOTIF_TRANSITION_ID="ws-pomo-transition"
+
+mkdir -p "$RUN"
+
+# ---------- helpers ----------
+
+now() { date +%s; }
+
+fmt_hms() {
+	s=$1
+	h=$((s / 3600)); m=$(((s % 3600) / 60)); sec=$((s % 60))
+	if [ "$h" -gt 0 ]; then printf '%dh %dm' "$h" "$m"
+	elif [ "$m" -gt 0 ]; then printf '%dm %ds' "$m" "$sec"
+	else printf '%ds' "$sec"; fi
+}
+
+fmt_mmss() {
+	s=$1; m=$((s / 60)); sec=$((s % 60))
+	printf '%02d:%02d' "$m" "$sec"
+}
+
+# Synchronous-id replacement: each new send updates the same notif on screen.
+notify_sync() {
+	id=$1; urgency=$2; title=$3; body=${4:-}
+	notify-send -a ws-pomodoro -u "$urgency" \
+		-h "string:x-canonical-private-synchronous:$id" \
+		"$title" "$body" >/dev/null 2>&1 || true
+}
+
+dismiss_sync() {
+	# Replace with a 1ms-timeout notif so mako closes it immediately.
+	notify-send -a ws-pomodoro -t 1 \
+		-h "string:x-canonical-private-synchronous:$1" \
+		" " >/dev/null 2>&1 || true
+}
+
+state_save() {
+	tmp=$STATE.tmp
+	{
+		printf 'stage=%s\n' "$stage"
+		printf 'remaining=%s\n' "$remaining"
+		printf 'paused=%s\n' "$paused"
+		printf 'work_total=%s\n' "$work_total"
+		printf 'session_start=%s\n' "$session_start"
+	} > "$tmp" && mv "$tmp" "$STATE"
+}
+
+state_load() {
+	stage=idle; remaining=0; paused=0; work_total=0; session_start=0
+	[ -f "$STATE" ] || return 0
+	# shellcheck disable=SC1090
+	. "$STATE"
+}
+
+daemon_pid() {
+	[ -f "$PIDFILE" ] || return 1
+	pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
+	[ -n "$pid" ] || return 1
+	kill -0 "$pid" 2>/dev/null || return 1
+	printf '%s\n' "$pid"
+}
+
+daemon_running() { daemon_pid >/dev/null; }
+
+# Atomically append a command and signal the daemon. If no daemon, no-op.
+send_cmd() {
+	pid=$(daemon_pid) || return 0
+	# Append is atomic on local filesystems for short writes (<PIPE_BUF).
+	printf '%s\n' "$1" >> "$QUEUE"
+	kill -USR1 "$pid" 2>/dev/null || true
+}
+
+ensure_daemon() {
+	daemon_running && return 0
+	setsid -f sh -c "exec '$0' daemon" </dev/null >/dev/null 2>&1
+	i=0
+	while ! daemon_running && [ "$i" -lt 30 ]; do
+		sleep 0.1; i=$((i + 1))
+	done
+}
+
+# ---------- music ----------
+
+music_running() { pgrep -x kew >/dev/null 2>&1; }
+
+music_start() {
+	music_running && return 0
+	[ -d "$MUSIC_DIR" ] || return 1
+	# kew's `shuffle <term>` only works when <term> matches a directory
+	# whose direct children are audio files (single album / artist with
+	# flat folder). It can't shuffle the whole library — passing the root
+	# returns a 1-track playlist that stops on song end.
+	#
+	# Workaround: enable kew's persistent shuffle flag, then `kew all`
+	# loads every song into one playlist. With shuffleEnabled=1 kew
+	# randomises the order at load time and plays through continuously.
+	kewrc="$HOME/.config/kew/kewrc"
+	if [ -f "$kewrc" ] && grep -q '^shuffleEnabled=0' "$kewrc"; then
+		sed -i 's/^shuffleEnabled=0/shuffleEnabled=1/' "$kewrc"
+	fi
+	# --noui: no curses UI; stdin off /dev/null avoids tty reads.
+	setsid -f sh -c "exec kew --noui all" \
+		</dev/null >/dev/null 2>&1
+}
+
+music_play() {
+	music_start
+	# MPRIS may take a moment to register on first launch.
+	for _ in 1 2 3 4 5 6 7 8; do
+		playerctl --player=kew play >/dev/null 2>&1 && return 0
+		sleep 0.25
+	done
+}
+
+music_pause() {
+	music_running || return 0
+	playerctl --player=kew pause >/dev/null 2>&1 || true
+}
+
+music_stop() {
+	music_running || return 0
+	playerctl --player=kew stop >/dev/null 2>&1 || true
+	pkill -x kew 2>/dev/null || true
+}
+
+# ---------- daemon ----------
+
+# Globals updated by signal handler / loop body.
+stage=idle; remaining=0; paused=0; work_total=0; session_start=0
+should_exit=0
+
+drain_queue() {
+	[ -f "$QUEUE" ] || return 0
+	tmp=$QUEUE.proc.$$
+	mv "$QUEUE" "$tmp" 2>/dev/null || return 0
+	while IFS= read -r cmd; do
+		[ -n "$cmd" ] || continue
+		handle_cmd "$cmd"
+	done < "$tmp"
+	rm -f "$tmp"
+	state_save
+}
+
+handle_cmd() {
+	case $1 in
+		pause)
+			[ "$paused" = 1 ] && return 0
+			paused=1
+			music_pause
+			notify_sync "$NOTIF_PAUSE_ID" critical "Paused" \
+				"$stage — $(fmt_mmss "$remaining") left. Click to resume."
+			;;
+		resume)
+			[ "$paused" = 0 ] && return 0
+			paused=0
+			dismiss_sync "$NOTIF_PAUSE_ID"
+			[ "$stage" = work ] && music_play
+			;;
+		add)
+			remaining=$((remaining + STEP_SECS))
+			;;
+		sub)
+			remaining=$((remaining - STEP_SECS))
+			[ "$remaining" -lt 60 ] && remaining=60
+			;;
+		skip)
+			remaining=0
+			stage_transition
+			;;
+		end)
+			session_end
+			should_exit=1
+			;;
+	esac
+}
+
+stage_transition() {
+	if [ "$stage" = work ]; then
+		stage=break; remaining=$BREAK_SECS
+		music_pause
+		notify_sync "$NOTIF_TRANSITION_ID" normal "Break time" \
+			"Worked $(fmt_hms "$work_total"). Take $((BREAK_SECS / 60)) min."
+	else
+		stage=work; remaining=$WORK_SECS
+		music_play
+		notify_sync "$NOTIF_TRANSITION_ID" normal "Back to work" \
+			"$((WORK_SECS / 60)) min focus block."
+	fi
+}
+
+session_end() {
+	dur=$(( $(now) - session_start ))
+	music_stop
+	dismiss_sync "$NOTIF_PAUSE_ID"
+	notify_sync "$NOTIF_TRANSITION_ID" normal "Session done" \
+		"Worked $(fmt_hms "$work_total") out of $(fmt_hms "$dur") total."
+	stage=idle; remaining=0; paused=0; work_total=0; session_start=0
+}
+
+daemon_cleanup() {
+	[ "$stage" != idle ] && state_save 2>/dev/null || true
+	rm -f "$PIDFILE" "$QUEUE"
+	dismiss_sync "$NOTIF_PAUSE_ID"
+	exit 0
+}
+
+daemon_loop() {
+	if daemon_running; then exit 0; fi
+	# Long-running loop with signal traps — `set -e` is too eager here
+	# (e.g. `[ x = y ] && return` in command handlers would terminate the
+	# daemon), and we handle errors explicitly anyway.
+	set +e
+	echo $$ > "$PIDFILE"
+	: > "$QUEUE"
+
+	trap 'drain_queue' USR1
+	trap 'daemon_cleanup' EXIT INT TERM HUP
+
+	state_load
+	if [ "$stage" = idle ] || [ -z "${stage:-}" ]; then
+		stage=work; remaining=$WORK_SECS; paused=0
+		work_total=0; session_start=$(now)
+	fi
+	state_save
+
+	# Greet + start music if work.
+	if [ "$stage" = work ]; then
+		notify_sync "$NOTIF_TRANSITION_ID" normal "Work" \
+			"$((WORK_SECS / 60)) min focus block."
+		music_play
+	else
+		notify_sync "$NOTIF_TRANSITION_ID" normal "Break" \
+			"$((BREAK_SECS / 60)) min."
+	fi
+	while [ "$should_exit" = 0 ]; do
+		# `sleep` is interruptible by SIGUSR1 — handler runs, then loop continues.
+		sleep 1 || true
+
+		# Drain in case signals coalesced (multiple commands, same handler call).
+		[ -s "$QUEUE" ] && drain_queue
+		[ "$should_exit" = 1 ] && break
+
+		if [ "$paused" = 0 ] && [ "$stage" != idle ]; then
+			remaining=$((remaining - 1))
+			[ "$stage" = work ] && work_total=$((work_total + 1))
+			[ "$remaining" -le 0 ] && stage_transition
+		fi
+
+		state_save
+	done
+
+	# Exit cleanly via cleanup trap.
+}
+
+# ---------- menu (front-end) ----------
+
+menu() {
+	state_load
+	running=0; daemon_running && running=1
+
+	if [ "$running" = 0 ] || [ "$stage" = idle ]; then
+		entries="start session"
+	elif [ "$paused" = 1 ]; then
+		entries="resume
++10 min
+-10 min
+skip stage
+end session"
+	else
+		entries="pause
++10 min
+-10 min
+skip stage
+end session"
+	fi
+
+	if [ "$running" = 1 ] && [ "$stage" != idle ]; then
+		label=Work; [ "$stage" = break ] && label=Break
+		[ "$paused" = 1 ] && label="$label (paused)"
+		header="── $label  $(fmt_mmss "$remaining")  ──"
+		entries="$header
+$entries"
+	fi
+
+	pick=$(printf '%s\n' "$entries" | dmenu-wl -i -p 'pomodoro:' \
+		-fn 'FiraCode Nerd Font Bold 11' \
+		-h 28 \
+		-nb '#000000' -nf '#ffffff' \
+		-sb '#2a2f3a' -sf '#ffffff') || exit 0
+
+	case $pick in
+		'start session')   start ;;
+		'end session')     end ;;
+		'pause')           send_cmd pause ;;
+		'resume')          send_cmd resume ;;
+		'+10 min')         send_cmd add ;;
+		'-10 min')         send_cmd sub ;;
+		'skip stage')      send_cmd skip ;;
+		*) ;;
+	esac
+}
+
+start() {
+	if daemon_running; then
+		state_load
+		[ "$stage" != idle ] && return 0
+	fi
+	rm -f "$STATE"
+	ensure_daemon
+}
+
+end() {
+	if daemon_running; then
+		send_cmd end
+	else
+		state_load
+		[ "$stage" != idle ] || return 0
+		notify_sync "$NOTIF_TRANSITION_ID" normal "Session done" \
+			"Worked $(fmt_hms "$work_total")."
+		rm -f "$STATE"
+	fi
+}
+
+status() {
+	state_load
+	printf 'stage=%s remaining=%s paused=%s work_total=%s daemon=%s\n' \
+		"$stage" "$remaining" "$paused" "$work_total" \
+		"$(daemon_running && echo yes || echo no)"
+}
+
+# ---------- dispatch ----------
+
+cmd=${1:-menu}
+case $cmd in
+	daemon) daemon_loop ;;
+	menu)   menu ;;
+	start)  start ;;
+	end)    end ;;
+	pause)  send_cmd pause ;;
+	resume) send_cmd resume ;;
+	add)    send_cmd add ;;
+	sub)    send_cmd sub ;;
+	skip)   send_cmd skip ;;
+	status) status ;;
+	*) echo "usage: ws-pomodoro {menu|start|end|pause|resume|add|sub|skip|status|daemon}" >&2; exit 2 ;;
+esac

@@ -145,6 +145,9 @@
 #define WS_LOCK_CMD       "swaylock"
 #define WS_SCREENSHOT_CMD "$HOME/.local/bin/screenshot-area"
 #define WS_OSD_CMD        "$HOME/.local/bin/dwl-osd"   /* volume/brightness/mic OSD */
+#define WS_POMODORO_CMD   "$HOME/.local/bin/ws-pomodoro" /* pomodoro timer + kew music */
+#define WS_POWERMENU_CMD  "$HOME/.local/bin/ws-powermenu" /* poweroff/reboot/hibernate/logout */
+#define WS_OBSIDIAN_CMD   "obsidian"
 
 /* ------------------------------------------------------------
  * KEYBINDS
@@ -164,6 +167,9 @@
  *   Win + l          →  lock screen
  *   Win + Shift + L  →  lock screen (alt chord)
  *   Win + Shift + S  →  screenshot
+ *   Win + p          →  pomodoro menu
+ *   Win + e          →  power menu (poweroff/reboot/hibernate/logout)
+ *   Win + o          →  obsidian
  * ------------------------------------------------------------ */
 #define WS_MOD            WLR_MODIFIER_LOGO
 
@@ -174,5 +180,8 @@
 #define WS_KEY_LOCK       XKB_KEY_l        /* Win + l          */
 #define WS_KEY_LOCK_ALT   XKB_KEY_L        /* Win + Shift + L  */
 #define WS_KEY_SCREENSHOT XKB_KEY_S        /* Win + Shift + S  */
+#define WS_KEY_POMODORO   XKB_KEY_p        /* Win + p          */
+#define WS_KEY_POWERMENU  XKB_KEY_e        /* Win + e          */
+#define WS_KEY_OBSIDIAN   XKB_KEY_o        /* Win + o          */
 
 #endif /* WAYLAND_SUCKLESS_CONFIG_H */

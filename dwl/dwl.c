@@ -311,6 +311,7 @@ static void keypress(struct wl_listener *listener, void *data);
 static void keypressmod(struct wl_listener *listener, void *data);
 static int keyrepeat(void *data);
 static void killclient(const Arg *arg);
+static void forcekillclient(const Arg *arg);
 static void locksession(struct wl_listener *listener, void *data);
 static void mapnotify(struct wl_listener *listener, void *data);
 static void maximizenotify(struct wl_listener *listener, void *data);
@@ -1981,6 +1982,29 @@ killclient(const Arg *arg)
 }
 
 void
+forcekillclient(const Arg *arg)
+{
+	Client *sel = focustop(selmon);
+	pid_t pid = 0;
+	if (!sel)
+		return;
+#ifdef XWAYLAND
+	if (client_is_x11(sel)) {
+		pid = sel->surface.xwayland->pid;
+	} else
+#endif
+	{
+		struct wl_client *wc = wl_resource_get_client(sel->surface.xdg->resource);
+		if (wc)
+			wl_client_get_credentials(wc, &pid, NULL, NULL);
+	}
+	if (pid > 0)
+		kill(pid, SIGKILL);
+	else
+		client_send_close(sel);
+}
+
+void
 locksession(struct wl_listener *listener, void *data)
 {
 	struct wlr_session_lock_v1 *session_lock = data;
@@ -2061,6 +2085,18 @@ mapnotify(struct wl_listener *listener, void *data)
 		setmon(c, p->mon, p->tags);
 	} else {
 		applyrules(c);
+	}
+	/* Center floating windows on their monitor's usable area instead of
+	 * letting them spawn at (0,0) — gives proper popup/dialog placement.
+	 * Must call resize() since applyrules→setmon already positioned the
+	 * scene node at the client's natural (0,0). */
+	if (c->isfloating && c->mon) {
+		struct wlr_box g = c->geom;
+		if (g.width  < c->mon->w.width)
+			g.x = c->mon->w.x + (c->mon->w.width  - g.width)  / 2;
+		if (g.height < c->mon->w.height)
+			g.y = c->mon->w.y + (c->mon->w.height - g.height) / 2;
+		resize(c, g, 0);
 	}
 	printstatus();
 

@@ -1,6 +1,7 @@
 daemonize
 show-failed-attempts
 indicator-caps-lock
+hide-keyboard-layout
 
 color=@WS_LOCK_SCREEN_HEX@
 

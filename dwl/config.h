@@ -42,8 +42,12 @@ enum Direction { DIR_LEFT, DIR_RIGHT, DIR_UP, DIR_DOWN };
 static int log_level = WLR_ERROR;
 
 static const Rule rules[] = {
-	/* app_id  title  tags mask  isfloating  monitor */
-	{ NULL,    NULL,  0,         0,          -1 },
+	/* app_id                     title  tags mask  isfloating  monitor */
+	/* xdg-desktop-portal frontends (file chooser, screencast picker, etc.)
+	 * — substring match catches -gtk, -gnome, -kde, -hyprland, etc. */
+	{ "xdg-desktop-portal",       NULL,  0,         1,          -1 },
+	{ "org.freedesktop.impl.portal", NULL, 0,       1,          -1 },
+	{ NULL,                       NULL,  0,         0,          -1 },
 };
 
 /* layout(s) */
@@ -127,11 +131,13 @@ static const Key keys[] = {
 	{ MODKEY,                     WS_KEY_LOCK,             spawn,             SHCMD(WS_LOCK_CMD) },
 	{ MODKEY|WLR_MODIFIER_SHIFT,  WS_KEY_LOCK_ALT,         spawn,             SHCMD(WS_LOCK_CMD) },
 	{ MODKEY|WLR_MODIFIER_SHIFT,  WS_KEY_SCREENSHOT,       spawn,             SHCMD(WS_SCREENSHOT_CMD) },
+	{ MODKEY,                     WS_KEY_POMODORO,         spawn,             SHCMD(WS_POMODORO_CMD " menu") },
+	{ MODKEY,                     WS_KEY_POWERMENU,        spawn,             SHCMD(WS_POWERMENU_CMD) },
+	{ MODKEY,                     WS_KEY_OBSIDIAN,         spawn,             SHCMD(WS_OBSIDIAN_CMD) },
 
 	/* window management */
 	{ MODKEY,                     XKB_KEY_q,               killclient,        {0} },
-	{ MODKEY|WLR_MODIFIER_SHIFT,  XKB_KEY_Q,               quit,              {0} },
-	{ MODKEY,                     XKB_KEY_e,               quit,              {0} },
+	{ MODKEY|WLR_MODIFIER_SHIFT,  XKB_KEY_Q,               forcekillclient,   {0} },
 	{ MODKEY,                     XKB_KEY_f,               togglefloating,    {0} },
 	{ MODKEY|WLR_MODIFIER_SHIFT,  XKB_KEY_F,               togglefullscreen,  {0} },
 

@@ -67,11 +67,12 @@ PKGS_void="
 	base-devel git pkg-config meson ninja
 	wayland-devel wayland-protocols libxkbcommon-devel libinput-devel
 	pixman-devel libxcb-devel xcb-util-wm-devel libdrm-devel
-	libseat-devel hwdata libdisplay-info-devel libpulse-devel
+	libseat-devel hwids libdisplay-info-devel pulseaudio-devel
 	pango-devel cairo-devel glib-devel
 	foot swaybg mako brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr ImageMagick
 	xdg-desktop-portal xdg-desktop-portal-gtk
+	adwaita-icon-theme hicolor-icon-theme gnome-themes-extra
 	xauth xorg-server-xwayland fontconfig"
 PKGS_arch="
 	base-devel git pkgconf meson ninja
@@ -81,6 +82,7 @@ PKGS_arch="
 	foot swaybg mako brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr imagemagick
 	xdg-desktop-portal xdg-desktop-portal-gtk
+	adwaita-icon-theme hicolor-icon-theme gnome-themes-extra
 	xorg-xwayland fontconfig"
 PKGS_debian="
 	build-essential git pkg-config meson ninja-build
@@ -93,6 +95,7 @@ PKGS_debian="
 	foot swaybg mako-notifier brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr imagemagick
 	xdg-desktop-portal xdg-desktop-portal-gtk xwayland
+	adwaita-icon-theme hicolor-icon-theme gnome-themes-extra
 	fontconfig wget unzip ca-certificates"
 PIPEWIRE_void="pipewire wireplumber"
 PIPEWIRE_arch="pipewire pipewire-pulse wireplumber"
@@ -103,9 +106,19 @@ install_deps() {
 	have_pipewire || eval "pkgs=\"\$pkgs \$PIPEWIRE_$DISTRO\""
 	case "$DISTRO" in
 		void)
-			$SUDO xbps-install -Sy $pkgs || die "xbps-install failed"
-			$SUDO xbps-install -Sy wlroots0.19 wlroots0.19-devel 2>/dev/null \
-				|| $SUDO xbps-install -Sy wlroots-devel 2>/dev/null \
+			$SUDO xbps-install -Sy >/dev/null || warn "repo sync failed"
+			missing=
+			for p in $pkgs; do
+				xbps-query -p pkgver "$p" >/dev/null 2>&1 && continue
+				if xbps-query -R "$p" >/dev/null 2>&1; then
+					missing="$missing $p"
+				else
+					warn "void: package '$p' not in repos — skipping"
+				fi
+			done
+			[ -n "$missing" ] && { $SUDO xbps-install -y $missing || die "xbps-install failed"; }
+			$SUDO xbps-install -y wlroots0.19 wlroots0.19-devel 2>/dev/null \
+				|| $SUDO xbps-install -y wlroots-devel 2>/dev/null \
 				|| warn "wlroots not in repos — will build from source" ;;
 		arch)
 			$SUDO pacman -S --needed --noconfirm $pkgs || die "pacman failed"
@@ -175,7 +188,7 @@ build_all() {
 }
 
 # ---- scripts (single source of truth, used by full install AND --rebuild) ----
-SCRIPTS="dwl-autostart dwl-wallpaper dwl-autolayout dwl-watch-outputs screenshot-area dmenu-launcher dwl-osd"
+SCRIPTS="dwl-autostart dwl-wallpaper dwl-autolayout dwl-watch-outputs screenshot-area dmenu-launcher dwl-osd ws-pomodoro ws-powermenu"
 install_scripts() {
 	mkdir -p "$HOME/.local/bin"
 	for s in $SCRIPTS; do
@@ -196,6 +209,11 @@ seed_configs() {
 	[ -f "$cfg/dwl/layout"    ] || { mkdir -p "$cfg/dwl"; echo above > "$cfg/dwl/layout"; }
 	[ -f "$cfg/foot/foot.ini" ] || install -Dm644 "$SRC/assets/foot.ini"   "$cfg/foot/foot.ini"
 	[ -f "$cfg/mako/config"   ] || install -Dm644 "$SRC/assets/mako.config" "$cfg/mako/config"
+
+	# xdg-desktop-portal: tell it to route FileChooser/AppChooser/Settings to
+	# the gtk backend (file pickers) and screencast/screenshot to wlr.
+	$SUDO install -Dm644 "$SRC/assets/dwl-portals.conf" \
+		/usr/share/xdg-desktop-portal/dwl-portals.conf
 
 	if [ ! -f "$cfg/swaylock/config" ]; then
 		mkdir -p "$cfg/swaylock"

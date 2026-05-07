@@ -49,7 +49,7 @@ FNR==1 {
 /^NoDisplay=true/   { skip=1 }
 /^OnlyShowIn=/      { skip=1 }
 /^Categories=/ {
-    if ($0 ~ /HardwareSettings|DesktopSettings|X-XFCE|Screensaver|PackageManager/) skip=1
+    if ($0 ~ /Screensaver|PackageManager/) skip=1
 }
 /^Name=/ && name==""  { sub(/^Name=/, ""); name=$0 }
 /^Exec=/ && ex==""    { sub(/^Exec=/, ""); ex=$0 }
