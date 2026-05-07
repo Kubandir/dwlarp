@@ -73,7 +73,8 @@ PKGS_void="
 	grim slurp wl-clipboard wlr-randr ImageMagick
 	xdg-desktop-portal xdg-desktop-portal-gtk
 	adwaita-icon-theme hicolor-icon-theme gnome-themes-extra
-	xauth xorg-server-xwayland fontconfig"
+	xauth xorg-server-xwayland fontconfig
+	curl unzip"
 PKGS_arch="
 	base-devel git pkgconf meson ninja
 	wayland wayland-protocols libxkbcommon libinput pixman
@@ -83,7 +84,8 @@ PKGS_arch="
 	grim slurp wl-clipboard wlr-randr imagemagick
 	xdg-desktop-portal xdg-desktop-portal-gtk
 	adwaita-icon-theme hicolor-icon-theme gnome-themes-extra
-	xorg-xwayland fontconfig"
+	xorg-xwayland fontconfig
+	curl unzip"
 PKGS_debian="
 	build-essential git pkg-config meson ninja-build
 	libwayland-dev wayland-protocols libwayland-bin
@@ -96,7 +98,7 @@ PKGS_debian="
 	grim slurp wl-clipboard wlr-randr imagemagick
 	xdg-desktop-portal xdg-desktop-portal-gtk xwayland
 	adwaita-icon-theme hicolor-icon-theme gnome-themes-extra
-	fontconfig wget unzip ca-certificates"
+	fontconfig curl unzip ca-certificates"
 PIPEWIRE_void="pipewire wireplumber"
 PIPEWIRE_arch="pipewire pipewire-pulse wireplumber"
 PIPEWIRE_debian="pipewire pipewire-pulse wireplumber"
@@ -236,45 +238,48 @@ NERD_VER=v3.2.1
 NERD_BASE="https://github.com/ryanoasis/nerd-fonts/releases/download/$NERD_VER"
 font_present() { have fc-list && fc-list | grep -qi "$1"; }
 
+fetch() {
+	# usage: fetch URL OUT — try curl, then wget
+	if have curl; then curl -fsSL -o "$2" "$1"
+	elif have wget; then wget -q -O "$2" "$1"
+	else return 1
+	fi
+}
+
 install_nerd_fonts() {
-	dest="$HOME/.local/share/fonts/NerdFonts"
-	tmp=$(mktemp -d); need=0
-	for pair in "FiraCode Nerd Font:FiraCode.zip" "Symbols Nerd Font:NerdFontsSymbolsOnly.zip"; do
-		name=${pair%:*}; zip=${pair##*:}
-		font_present "$name" && continue
-		say "downloading $name"
-		if wget -q -O "$tmp/$zip" "$NERD_BASE/$zip"; then
-			unzip -oq "$tmp/$zip" -d "$dest/${zip%.zip}" \
-				-x "*.md" "*.txt" "LICENSE" || true
-			need=1
-		else
-			warn "$name download failed — glyphs may be missing"
-		fi
-	done
+	font_present "FiraCode Nerd Font" && return
+	dest="$HOME/.local/share/fonts/NerdFonts/FiraCode"
+	tmp=$(mktemp -d)
+	say "downloading FiraCode Nerd Font"
+	if fetch "$NERD_BASE/FiraCode.zip" "$tmp/FiraCode.zip"; then
+		mkdir -p "$dest"
+		unzip -oq "$tmp/FiraCode.zip" -d "$dest" -x "*.md" "*.txt" "LICENSE" || true
+		fc-cache -f "$dest" >/dev/null 2>&1 || true
+	else
+		warn "FiraCode Nerd Font download failed — install curl or wget"
+	fi
 	rm -rf "$tmp"
-	[ "$need" -eq 1 ] && fc-cache -f "$dest" >/dev/null 2>&1 || true
 }
 
 install_fonts() {
+	# Try distro package first (single, well-known nerd-firacode package); fall
+	# back to GitHub release zip if not packaged or wrong name.
 	case "$DISTRO" in
 		arch)
-			sys=
-			for p in ttf-firacode-nerd ttf-nerd-fonts-symbols noto-fonts noto-fonts-emoji; do
-				pacman -Si "$p" >/dev/null 2>&1 && sys="$sys $p"
-			done
-			[ -n "$sys" ] && $SUDO pacman -S --needed --noconfirm $sys || true ;;
+			pacman -Si ttf-firacode-nerd >/dev/null 2>&1 \
+				&& $SUDO pacman -S --needed --noconfirm ttf-firacode-nerd || true ;;
 		void)
-			sys=
-			for p in nerd-fonts-firacode noto-fonts-ttf noto-fonts-emoji; do
-				xbps-query -Rs "$p" >/dev/null 2>&1 && sys="$sys $p"
-			done
-			[ -n "$sys" ] && $SUDO xbps-install -Sy $sys || true ;;
+			# Void's nerd-font pkgs vary by version; probe a few names.
+			for p in nerd-fonts-firacode-ttf nerd-fonts-firacode font-firacode-nerd; do
+				if xbps-query -R "$p" >/dev/null 2>&1; then
+					$SUDO xbps-install -Sy "$p" && break
+				fi
+			done ;;
 		debian)
-			$SUDO apt-get install -y --no-install-recommends \
-				fonts-noto fonts-noto-color-emoji fonts-symbola || true ;;
+			apt-cache show fonts-firacode-nerd >/dev/null 2>&1 \
+				&& $SUDO apt-get install -y --no-install-recommends fonts-firacode-nerd || true ;;
 	esac
-	font_present "FiraCode Nerd Font" && font_present "Symbols Nerd Font" \
-		|| install_nerd_fonts
+	font_present "FiraCode Nerd Font" || install_nerd_fonts
 	fc-cache -f >/dev/null 2>&1 || true
 	font_present "FiraCode Nerd Font" \
 		|| warn "FiraCode Nerd Font not detected — bar/foot may render boxes"
