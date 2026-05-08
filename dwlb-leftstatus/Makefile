@@ -1,7 +1,7 @@
 PREFIX  ?= $(HOME)/.local
 CFLAGS  ?= -O2 -Wall -Wextra
 
-dwlb-leftstatus: dwlb-leftstatus.c
+dwlb-leftstatus: dwlb-leftstatus.c ../config.h
 	$(CC) $(CFLAGS) -I.. -o $@ $<
 
 install: dwlb-leftstatus

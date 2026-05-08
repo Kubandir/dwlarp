@@ -2,4 +2,13 @@
 # Launches dwl with bar + status feeders. dwl -s pipes its own stdout into the
 # child shell's stdin; dwl-autostart redirects from /dev/null so it doesn't
 # consume that pipe (the status feeders need it).
-exec dwl -s "$HOME/.local/bin/dwl-autostart & dwlb & sleep 0.3; $HOME/.local/bin/dwlb-leftstatus | dwlb -leftstatus-stdin all & $HOME/.local/bin/dwlb-status | dwlb -status-stdin all"
+#
+# `dbus-run-session` wraps the whole session so apps that need a user dbus
+# bus (bluetuith, gnome-keyring, portals) can find one. If a bus is already
+# inherited from the seat (elogind/systemd-logind) we skip the wrapper.
+DWL_CMD='dwl -s "$HOME/.local/bin/dwl-autostart & dwlb & sleep 0.3; $HOME/.local/bin/dwlb-leftstatus | dwlb -leftstatus-stdin all & $HOME/.local/bin/dwlb-status | dwlb -status-stdin all"'
+
+if [ -n "$DBUS_SESSION_BUS_ADDRESS" ] || ! command -v dbus-run-session >/dev/null 2>&1; then
+	exec sh -c "$DWL_CMD"
+fi
+exec dbus-run-session sh -c "$DWL_CMD"

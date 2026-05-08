@@ -16,16 +16,18 @@
 
 set -eu
 
-REBUILD=0; SKIP_DEPS=0
+REBUILD=0; SKIP_DEPS=0; FORCE=${FORCE:-0}
 for a in "$@"; do
 	case "$a" in
 		-r|--rebuild)         REBUILD=1 ;;
 		-d|--skip-deps)       SKIP_DEPS=1 ;;
+		-f|--force)           FORCE=1 ;;
 		-y|--noconfirm)       ;;   # accepted for compatibility; install is non-interactive
 		-h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 		*) printf 'unknown flag: %s\n' "$a" >&2; exit 2 ;;
 	esac
 done
+export FORCE
 
 say()  { printf '\n>>> %s\n' "$*"; }
 warn() { printf '!!! %s\n' "$*" >&2; }
@@ -74,6 +76,7 @@ PKGS_void="
 	xdg-desktop-portal xdg-desktop-portal-gtk
 	adwaita-icon-theme hicolor-icon-theme gnome-themes-extra
 	xauth xorg-server-xwayland fontconfig
+	wlsunset bluetuith impala pulsemixer
 	curl unzip"
 PKGS_arch="
 	base-devel git pkgconf meson ninja
@@ -85,6 +88,7 @@ PKGS_arch="
 	xdg-desktop-portal xdg-desktop-portal-gtk
 	adwaita-icon-theme hicolor-icon-theme gnome-themes-extra
 	xorg-xwayland fontconfig
+	wlsunset impala pulsemixer bluez-utils
 	curl unzip"
 PKGS_debian="
 	build-essential git pkg-config meson ninja-build
@@ -98,6 +102,7 @@ PKGS_debian="
 	grim slurp wl-clipboard wlr-randr imagemagick
 	xdg-desktop-portal xdg-desktop-portal-gtk xwayland
 	adwaita-icon-theme hicolor-icon-theme gnome-themes-extra
+	wlsunset pulsemixer bluez
 	fontconfig curl unzip ca-certificates"
 PIPEWIRE_void="pipewire wireplumber"
 PIPEWIRE_arch="pipewire pipewire-pulse wireplumber"
@@ -181,12 +186,18 @@ install_dmenu_wl() {
 }
 
 # ---- C projects ----
-build()       { make -C "$1" clean >/dev/null 2>&1 || true; make -C "$1"; }
+# Incremental: rely on make's mtime tracking. Pass FORCE=1 (or `--rebuild --force`)
+# to nuke artifacts and recompile from scratch.
+build() {
+	[ "${FORCE:-0}" = 1 ] && make -C "$1" clean >/dev/null 2>&1 || true
+	make -C "$1"
+}
 build_all() {
 	say "building dwl";             build "$SRC/dwl";             $SUDO make -C "$SRC/dwl"             PREFIX=/usr install
 	say "building dwlb";            build "$SRC/dwlb";            $SUDO make -C "$SRC/dwlb"            PREFIX=/usr install
 	say "building dwlb-status";     build "$SRC/dwlb-status";     make -C "$SRC/dwlb-status"           PREFIX="$HOME/.local" install
 	say "building dwlb-leftstatus"; build "$SRC/dwlb-leftstatus"; make -C "$SRC/dwlb-leftstatus"       PREFIX="$HOME/.local" install
+	say "building ws-hud";          build "$SRC/ws-hud";          make -C "$SRC/ws-hud"                PREFIX="$HOME/.local" install
 }
 
 # ---- scripts (single source of truth, used by full install AND --rebuild) ----
@@ -197,7 +208,10 @@ install_scripts() {
 		install -Dm755 "$SRC/scripts/$s" "$HOME/.local/bin/$s"
 	done
 	rm -f "$HOME/.local/bin/bemenu-desktop"  # legacy launcher
-	$SUDO install -Dm755 "$SRC/scripts/dwl-session"   /usr/local/bin/dwl-session
+	# install to /usr/bin so ly's PATH (which has /usr/bin before /usr/local/bin)
+	# picks up the dbus-wrapping launcher; remove any stale duplicates.
+	$SUDO install -Dm755 "$SRC/scripts/dwl-session"   /usr/bin/dwl-session
+	$SUDO rm -f /usr/local/bin/dwl-session
 	$SUDO install -Dm644 "$SRC/desktop/dwl.desktop"   /usr/share/wayland-sessions/dwl.desktop
 }
 

@@ -41,6 +41,8 @@ fi
 
 command -v mako >/dev/null 2>&1 && _restart mako mako
 
+command -v ws-hud >/dev/null 2>&1 && _restart ws-hud ws-hud
+
 # xdg-desktop-portal (file pickers, screen share). libexec path differs across distros.
 find_portal() {
     for p in /usr/libexec/"$1" /usr/lib/"$1" /usr/lib/x86_64-linux-gnu/"$1"; do

@@ -47,7 +47,14 @@ static const Rule rules[] = {
 	 * — substring match catches -gtk, -gnome, -kde, -hyprland, etc. */
 	{ "xdg-desktop-portal",       NULL,  0,         1,          -1 },
 	{ "org.freedesktop.impl.portal", NULL, 0,       1,          -1 },
-	{ NULL,                       NULL,  0,         0,          -1 },
+	/* ws-hud popup launchers — match either app_id or title (foot sets both
+	 * via --app-id and -T; pavucontrol's app_id contains "pavucontrol") */
+	{ "ws-hud-bt",                NULL,  0,         1,          -1 },
+	{ "ws-hud-wifi",              NULL,  0,         1,          -1 },
+	{ "ws-hud-vol",               NULL,  0,         1,          -1 },
+	{ NULL,                       "ws-hud-bt",   0, 1,          -1 },
+	{ NULL,                       "ws-hud-wifi", 0, 1,          -1 },
+	{ NULL,                       "ws-hud-vol",  0, 1,          -1 },
 };
 
 /* layout(s) */

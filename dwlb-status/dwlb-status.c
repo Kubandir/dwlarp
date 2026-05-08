@@ -149,7 +149,25 @@ static void sample_cpu_temp(void) {
 static void sample_disk(void) {
 	struct statvfs s;
 	if (statvfs("/", &s) || s.f_blocks == 0) return;
-	cached_disk = (int)(((s.f_blocks - s.f_bavail) * 100) / s.f_blocks);
+	unsigned long long total = (unsigned long long)s.f_blocks * s.f_frsize;
+	unsigned long long used  = (unsigned long long)(s.f_blocks - s.f_bfree) * s.f_frsize;
+	/* Subtract file-backed swap (e.g. /swapfile) so it doesn't inflate disk%. */
+	FILE *sw = fopen("/proc/swaps", "re");
+	if (sw) {
+		char line[512];
+		(void)!fgets(line, sizeof line, sw); /* header */
+		while (fgets(line, sizeof line, sw)) {
+			char path[256], type[32];
+			unsigned long long size_kb;
+			if (sscanf(line, "%255s %31s %llu", path, type, &size_kb) == 3
+			    && strcmp(type, "file") == 0) {
+				unsigned long long b = size_kb * 1024ULL;
+				if (b < used) used -= b; else used = 0;
+			}
+		}
+		fclose(sw);
+	}
+	cached_disk = total ? (int)((used * 100) / total) : 0;
 }
 
 static void detect_bat(void) {

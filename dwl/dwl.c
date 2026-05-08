@@ -529,12 +529,16 @@ applyrules(Client *c)
 
 	appid = client_get_appid(c);
 	title = client_get_title(c);
+	fprintf(stderr, "[dwl applyrules] appid=%s title=%s\n",
+			appid ? appid : "(null)", title ? title : "(null)");
 
 	for (r = rules; r < END(rules); r++) {
-		if ((!r->title || strstr(title, r->title))
-				&& (!r->id || strstr(appid, r->id))) {
+		if ((!r->title || (title && strstr(title, r->title)))
+				&& (!r->id || (appid && strstr(appid, r->id)))) {
 			c->isfloating = r->isfloating;
 			newtags |= r->tags;
+			fprintf(stderr, "[dwl applyrules]   match: id=%s title=%s -> floating=%d\n",
+					r->id ? r->id : "*", r->title ? r->title : "*", r->isfloating);
 			i = 0;
 			wl_list_for_each(m, &mons, link) {
 				if (r->monitor == i++)

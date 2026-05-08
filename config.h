@@ -136,6 +136,53 @@
 #define WS_STATUS_CADENCE_DISK  300    /* disk usage */
 
 /* ------------------------------------------------------------
+ * HUD WIDGET (ws-hud) — hover-revealed button panel that slides
+ * down from the bar.  Launch with `ws-hud` (not autostarted).
+ *
+ * Colours below are ARGB (0xAARRGGBB) — note the alpha is the
+ * top byte, unlike the WS_BAR_* colours which are RGBA.
+ * ------------------------------------------------------------ */
+
+/* colours */
+#define WS_HUD_BG               0xcc000000u   /* panel background (matches WS_BAR_BG) */
+#define WS_HUD_FG               0xff1e3a3au   /* outer + per-button border (=WS_BORDER) */
+#define WS_HUD_ON               0xff3a7268u   /* toggle-on fill (=WS_FOCUS) */
+#define WS_HUD_HOLD             0xff3a7268u   /* click-flash fill while held */
+#define WS_HUD_ICON             0xffffffffu   /* nerd-font glyph colour */
+#define WS_HUD_FONT             "FiraCode Nerd Font:size=22"
+
+/* buttons — { TYPE, action, alt-action, icon }
+ *   TYPE       0 = click (one shot), 1 = toggle (alternates action/alt-action)
+ *   action     shell command run on press (or on toggle-on); NULL = no-op
+ *   alt-action toggle-off command (ignored for click; NULL for click)
+ *   icon       nerd-font codepoint shown in the button (0 = blank)
+ * Add or remove rows freely; widget width auto-fits the count. */
+#define WS_HUD_BUTTONS \
+	{ 1, "wlsunset -T 4001 -t 4000",       "pkill -x wlsunset",            0xf186 }, /* moon — night mode (always ~4000K while toggled; wlsunset requires T>t) */ \
+	{ 1, "makoctl mode -a do-not-disturb", "makoctl mode -r do-not-disturb", 0xf1f6 }, /* bell-slash — DND (needs the [mode=do-not-disturb] block in mako config) */ \
+	{ 0, "foot -T ws-hud-bt   --app-id=ws-hud-bt   -e bluetuith --no-warning", NULL, 0xf293 }, /* bluetooth */ \
+	{ 0, "foot -T ws-hud-wifi --app-id=ws-hud-wifi -e impala",    NULL, 0xf1eb }, /* wifi */ \
+	{ 0, "foot -T ws-hud-vol  --app-id=ws-hud-vol  -e pulsemixer", NULL, 0xf028 }  /* volume */
+
+/* geometry (pixels) */
+#define WS_HUD_BTN_W            60   /* button width  */
+#define WS_HUD_BTN_H            60   /* button height */
+#define WS_HUD_BTN_GAP          12   /* horizontal gap between buttons */
+#define WS_HUD_BTN_BORDER_PX    2    /* per-button border thickness */
+#define WS_HUD_PAD              10   /* inner padding around the button row */
+#define WS_HUD_OUTER_PX         2    /* panel outer border thickness */
+#define WS_HUD_BAR_H            28   /* dwlb bar height — top strip stays transparent */
+#define WS_HUD_BTN_OVERLAP      16   /* px buttons extend up into the bar zone */
+#define WS_HUD_TRIG_H           5    /* hover-trigger strip height */
+
+/* timing (milliseconds) */
+#define WS_HUD_HIDE_DELAY_MS    30   /* deferred hide after pointer leave */
+#define WS_HUD_CLICK_GRACE_MS   100  /* leaves within this long after a click are dropped */
+#define WS_HUD_ANIM_TAU_MS      50.0 /* slide-animation time-constant (smaller = snappier) */
+#define WS_HUD_ANIM_FRAME_MS    16   /* animation tick (~60Hz) */
+#define WS_HUD_ANIM_EPSILON     0.5  /* px from target where animation snaps */
+
+/* ------------------------------------------------------------
  * APP COMMANDS
  * ------------------------------------------------------------ */
 #define WS_TERM_CMD       "foot"
