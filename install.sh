@@ -95,6 +95,7 @@ PKGS_debian="
 	libwayland-dev wayland-protocols libwayland-bin
 	libxkbcommon-dev libinput-dev libpixman-1-dev
 	libxcb1-dev libxcb-icccm4-dev libxcb-render-util0-dev libxcb-ewmh-dev libxcb-res0-dev
+	libxcb-composite0-dev libxcb-xfixes0-dev libxcb-render0-dev
 	libdrm-dev libseat-dev libudev-dev libgbm-dev libegl1-mesa-dev libgles2-mesa-dev
 	libdisplay-info-dev hwdata libpulse-dev
 	libpango1.0-dev libcairo2-dev libglib2.0-dev
