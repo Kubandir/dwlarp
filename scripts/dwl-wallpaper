@@ -1,11 +1,6 @@
 #!/bin/sh
 # dwl-wallpaper — span one image across all enabled outputs.
-#
-# Computes the bounding box from `wlr-randr`, scales the image to cover it,
-# crops one slice per output, feeds each to its own swaybg. Caches per-output
-# crops keyed by image mtime + layout, so repeat invocations with unchanged
-# inputs skip ImageMagick entirely. Re-run on output hotplug.
-#
+# Cache keyed by (mtime, layout); single-output skips magick entirely.
 # Usage: dwl-wallpaper PATH
 
 set -eu
@@ -30,12 +25,9 @@ LAYOUT=$(wlr-randr | awk '
 ')
 [ -n "$LAYOUT" ] || { echo "no enabled outputs" >&2; exit 1; }
 
-# Single-output fast path: no magick, just point swaybg at the source.
-NOUT=$(echo "$LAYOUT" | wc -l)
-if [ "$NOUT" -eq 1 ]; then
-    NAME=$(echo "$LAYOUT" | awk '{print $1}')
+if [ "$(echo "$LAYOUT" | wc -l)" -eq 1 ]; then
     pkill -x swaybg 2>/dev/null || true
-    setsid -f swaybg -o "$NAME" -i "$IMG" -m fill >/dev/null 2>&1
+    setsid -f swaybg -o "$(echo "$LAYOUT" | awk '{print $1}')" -i "$IMG" -m fill >/dev/null 2>&1
     exit 0
 fi
 
@@ -49,14 +41,13 @@ spawn_all() {
     done
 }
 
-# Cache key: image identity + bbox + each output's geometry.
 IMG_ABS=$(readlink -f "$IMG" 2>/dev/null || echo "$IMG")
 IMG_MTIME=$(stat -c %Y "$IMG" 2>/dev/null || stat -f %m "$IMG" 2>/dev/null || echo 0)
 SIG="$IMG_ABS|$IMG_MTIME|${W}x${H}|$LAYOUT"
 SIG_FILE="$CACHE/sig"
 
-cache_valid=1
-[ -r "$SIG_FILE" ] && [ "$(cat "$SIG_FILE")" = "$SIG" ] || cache_valid=0
+cache_valid=0
+[ -r "$SIG_FILE" ] && [ "$(cat "$SIG_FILE")" = "$SIG" ] && cache_valid=1
 if [ "$cache_valid" = 1 ]; then
     while read -r name _x _y _w _h; do
         [ -f "$CACHE/$name.png" ] || { cache_valid=0; break; }
@@ -64,27 +55,19 @@ if [ "$cache_valid" = 1 ]; then
 $LAYOUT
 EOF
 fi
-
-if [ "$cache_valid" = 1 ]; then
-    spawn_all
-    exit 0
-fi
+[ "$cache_valid" = 1 ] && { spawn_all; exit 0; }
 
 MAGICK=$(command -v magick || command -v convert) \
     || { echo "imagemagick required" >&2; exit 1; }
 
-# Build all per-output crops in a single magick invocation: load + resize once,
-# then clone/crop/write per output.
+# Single magick invocation: load + resize once, clone/crop/write per output.
 set -- "$IMG" -resize "${W}x${H}^" -gravity center -extent "${W}x${H}" +gravity
 while read -r name x y w h; do
-    set -- "$@" \
-        \( +clone -crop "${w}x${h}+${x}+${y}" +repage -write "$CACHE/$name.png" +delete \)
+    set -- "$@" \( +clone -crop "${w}x${h}+${x}+${y}" +repage -write "$CACHE/$name.png" +delete \)
 done <<EOF
 $LAYOUT
 EOF
-set -- "$@" null:
-
-"$MAGICK" "$@"
+"$MAGICK" "$@" null:
 
 printf '%s' "$SIG" > "$SIG_FILE"
 spawn_all

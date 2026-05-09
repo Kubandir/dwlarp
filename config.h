@@ -1,13 +1,13 @@
 /* ============================================================
- * wayland-suckless — single user-facing config.
+ * dwlarp — single user-facing config.
  *
  * Edit values here, then re-run ./install.sh.  Everything
  * downstream (compositor, bar, status, lock screen) is driven
  * by these macros.  No other file should need touching.
  * ============================================================ */
 
-#ifndef WAYLAND_SUCKLESS_CONFIG_H
-#define WAYLAND_SUCKLESS_CONFIG_H
+#ifndef DWLARP_CONFIG_H
+#define DWLARP_CONFIG_H
 
 /* ------------------------------------------------------------
  * COLORS  (0xRRGGBBAA — alpha for transparency where supported)
@@ -233,4 +233,4 @@
 #define WS_KEY_POWERMENU  XKB_KEY_e        /* Win + e          */
 #define WS_KEY_OBSIDIAN   XKB_KEY_o        /* Win + o          */
 
-#endif /* WAYLAND_SUCKLESS_CONFIG_H */
+#endif /* DWLARP_CONFIG_H */

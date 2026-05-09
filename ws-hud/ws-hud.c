@@ -600,9 +600,8 @@ ptr_enter(void *d, struct wl_pointer *p, uint32_t serial,
 	cursor_kind = -1; /* force reapply on this enter's serial */
 	set_cursor((m->visible && hit(cur_x, cur_y) >= 0) ? 1 : 0);
 	m->hide_at_ms = 0;
-	/* If the pointer was already over the trigger zone when our surface
-	   first mapped, the compositor fires ptr_enter immediately — the user
-	   didn't actually hover. Ignore enters within the startup grace. */
+	/* Suppress the synthetic enter the compositor fires when our surface
+	   maps under an already-stationary pointer. */
 	if (m->configured_at_ms &&
 	    now_ms() - m->configured_at_ms < WS_HUD_STARTUP_GRACE_MS)
 		return;
@@ -684,9 +683,7 @@ reg_global(void *d, struct wl_registry *r, uint32_t name,
 		struct mon *m = &mons[n_mons++];
 		m->name   = name;
 		m->output = wl_registry_bind(r, name, &wl_output_interface, 3);
-		/* During initial bootstrap the main() loop sets up all known
-		   outputs; afterwards we set up hot-plugged ones here. */
-		if (startup_done)
+		if (startup_done) /* hot-plug; initial outputs are set up by main() */
 			setup_mon(m);
 	}
 }

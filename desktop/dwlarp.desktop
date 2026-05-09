@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=dwl
+Name=dwlarp
 Comment=dwm for Wayland
-Exec=dwl-session
+Exec=dwlarp
 Type=Application

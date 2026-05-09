@@ -1,4 +1,4 @@
-# wayland-suckless
+# dwlarp
 
 dwl 0.8 (with btrtile BSP) + dwlb + minimal status feeders. One installer for
 Void, Arch, and Debian/Ubuntu — including default Debian + GNOME, where it
@@ -7,18 +7,18 @@ detects the existing PipeWire stack and leaves it alone.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Kubandir/wayland-suckless/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Kubandir/dwlarp/main/install.sh | sh
 ```
 
 Or clone and run:
 
 ```sh
-git clone https://github.com/Kubandir/wayland-suckless
-cd wayland-suckless
+git clone https://github.com/Kubandir/dwlarp
+cd dwlarp
 ./install.sh
 ```
 
-After it finishes, log out, pick **dwl** at the display manager, log in.
+After it finishes, log out, pick **dwlarp** at the display manager, log in.
 
 ## Flags
 
@@ -39,8 +39,8 @@ Optional env vars:
 | --------------------------------------------- | ----------------------------------- |
 | `/usr/bin/dwl`                                | compositor                          |
 | `/usr/bin/dwlb`                               | bar                                 |
-| `/usr/local/bin/dwl-session`                  | session entrypoint (used by `Exec=`)|
-| `/usr/share/wayland-sessions/dwl.desktop`     | greeter entry                       |
+| `/usr/bin/dwlarp`                             | session entrypoint (used by `Exec=`)|
+| `/usr/share/wayland-sessions/dwlarp.desktop`  | greeter entry                       |
 | `~/.local/bin/dwl-autostart`                  | per-session autostart               |
 | `~/.local/bin/dwlb-status` / `dwlb-leftstatus`| status feeders                      |
 | `~/.local/bin/screenshot-area`                | grim+slurp helper                   |
@@ -79,7 +79,7 @@ dwl/                  # dwl 0.8 + btrtile + dwl-ipc-unstable-v2
 dwlb/                 # bar with IPC + leftstatus extension
 dwlb-status/          # libpulse-driven status feeder (1s tick, idle ~0% CPU)
 dwlb-leftstatus/      # logo + clock, minute-aligned via timerfd
-scripts/              # dwl-session, dwl-autostart, dwl-osd, dmenu-launcher, …
-desktop/              # dwl.desktop
+scripts/              # dwlarp, dwl-autostart, dwl-osd, dmenu-launcher, …
+desktop/              # dwlarp.desktop
 assets/               # wallpaper, foot/mako/swaylock/ly templates
 ```

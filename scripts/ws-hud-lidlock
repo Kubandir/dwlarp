@@ -1,48 +1,28 @@
 #!/bin/sh
-# ws-hud-lidlock — hold an elogind handle-lid-switch inhibitor so closing the
-# lid does NOT trigger the configured action (hibernate). Driven by the HUD
-# toggle button.
+# ws-hud-lidlock — hold a logind/elogind handle-lid-switch inhibitor so closing
+# the lid does not trigger hibernate. Driven by the HUD toggle.
 #
-#   ws-hud-lidlock on    acquire inhibitor (idempotent)
-#   ws-hud-lidlock off   release inhibitor
-#   ws-hud-lidlock status  prints "on" or "off"
+#   ws-hud-lidlock on | off | status
 
 set -eu
 
 PIDF="${XDG_RUNTIME_DIR:-/tmp}/ws-hud-lidlock.pid"
+INHIBIT=$(command -v elogind-inhibit || command -v systemd-inhibit) \
+	|| { echo "need elogind-inhibit or systemd-inhibit" >&2; exit 1; }
 
 alive() { [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF" 2>/dev/null)" 2>/dev/null; }
-
-stop() {
-    if [ -f "$PIDF" ]; then
-        kill "$(cat "$PIDF")" 2>/dev/null || true
-        rm -f "$PIDF"
-    fi
-}
+stop()  { [ -f "$PIDF" ] && { kill "$(cat "$PIDF")" 2>/dev/null || :; rm -f "$PIDF"; }; }
 
 case "${1:-}" in
-    on)
-        alive && exit 0
-        stop
-        # Detach so the inhibitor outlives the calling shell. setsid + & makes
-        # the elogind-inhibit process its own session leader; we record its PID
-        # for later release.
-        setsid sh -c 'exec elogind-inhibit \
-            --what=handle-lid-switch \
-            --who=ws-hud \
-            --why="user override (lid-lock toggle)" \
-            --mode=block \
-            sleep infinity' </dev/null >/dev/null 2>&1 &
-        echo $! > "$PIDF"
-        ;;
-    off)
-        stop
-        ;;
-    status)
-        if alive; then echo on; else echo off; fi
-        ;;
-    *)
-        echo "usage: ${0##*/} on|off|status" >&2
-        exit 2
-        ;;
+	on)
+		alive && exit 0
+		stop
+		setsid sh -c 'exec "$0" \
+			--what=handle-lid-switch --who=ws-hud \
+			--why="user override (lid-lock toggle)" --mode=block \
+			sleep infinity' "$INHIBIT" </dev/null >/dev/null 2>&1 &
+		echo $! > "$PIDF" ;;
+	off)    stop ;;
+	status) alive && echo on || echo off ;;
+	*)      echo "usage: ${0##*/} on|off|status" >&2; exit 2 ;;
 esac

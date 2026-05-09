@@ -1,18 +1,15 @@
 #!/bin/sh
-# wayland-suckless installer.
+# dwlarp installer. Supported: Void, Arch, Debian/Ubuntu.
 #
 # Usage:
-#     ./install.sh                full install
+#     ./install.sh                full install (greeter, fonts, configs, ly)
 #     ./install.sh --rebuild      rebuild C projects only (after editing config.h)
 #     ./install.sh --skip-deps    skip distro packages
 #     ./install.sh -y             non-interactive
 #     ./install.sh -h             help
 #
 # Curl-pipeable:
-#     curl -fsSL https://raw.githubusercontent.com/Kubandir/wayland-suckless/main/install.sh | sh
-#
-# Env:
-#     WITH_LY=1   install + enable ly greeter (Arch/Void only)
+#     curl -fsSL https://raw.githubusercontent.com/Kubandir/dwlarp/main/install.sh | sh
 
 set -eu
 
@@ -23,7 +20,7 @@ for a in "$@"; do
 		-d|--skip-deps)       SKIP_DEPS=1 ;;
 		-f|--force)           FORCE=1 ;;
 		-y|--noconfirm)       ;;   # accepted for compatibility; install is non-interactive
-		-h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+		-h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 		*) printf 'unknown flag: %s\n' "$a" >&2; exit 2 ;;
 	esac
 done
@@ -46,9 +43,9 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo "")
 if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/dwl/dwl.c" ]; then
 	SRC=$SCRIPT_DIR
 else
-	SRC=$(mktemp -d)/wayland-suckless
+	SRC=$(mktemp -d)/dwlarp
 	say "cloning source"
-	git clone --depth=1 https://github.com/Kubandir/wayland-suckless.git "$SRC"
+	git clone --depth=1 https://github.com/Kubandir/dwlarp.git "$SRC"
 fi
 
 # ---- distro detection ----
@@ -71,11 +68,12 @@ PKGS_void="
 	pixman-devel libxcb-devel xcb-util-wm-devel libdrm-devel
 	libseat-devel hwids libdisplay-info-devel pulseaudio-devel
 	pango-devel cairo-devel glib-devel
+	elogind
 	foot swaybg mako brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr ImageMagick
 	xdg-desktop-portal xdg-desktop-portal-gtk
-	adwaita-icon-theme hicolor-icon-theme gnome-themes-extra
-	xauth xorg-server-xwayland fontconfig
+	adwaita-icon-theme hicolor-icon-theme
+	xorg-server-xwayland fontconfig
 	wlsunset bluetuith impala pulsemixer
 	wireguard-tools jq
 	curl unzip"
@@ -87,7 +85,7 @@ PKGS_arch="
 	foot swaybg mako brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr imagemagick
 	xdg-desktop-portal xdg-desktop-portal-gtk
-	adwaita-icon-theme hicolor-icon-theme gnome-themes-extra
+	adwaita-icon-theme hicolor-icon-theme
 	xorg-xwayland fontconfig
 	wlsunset impala pulsemixer bluez-utils
 	wireguard-tools jq
@@ -104,7 +102,7 @@ PKGS_debian="
 	foot swaybg mako-notifier brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr imagemagick
 	xdg-desktop-portal xdg-desktop-portal-gtk xwayland
-	adwaita-icon-theme hicolor-icon-theme gnome-themes-extra
+	adwaita-icon-theme hicolor-icon-theme
 	wlsunset pulsemixer bluez
 	wireguard-tools jq
 	fontconfig curl unzip ca-certificates"
@@ -212,24 +210,23 @@ install_scripts() {
 		install -Dm755 "$SRC/scripts/$s" "$HOME/.local/bin/$s"
 	done
 	rm -f "$HOME/.local/bin/bemenu-desktop"  # legacy launcher
-	# install to /usr/bin so ly's PATH (which has /usr/bin before /usr/local/bin)
-	# picks up the dbus-wrapping launcher; remove any stale duplicates.
-	$SUDO install -Dm755 "$SRC/scripts/dwl-session"   /usr/bin/dwl-session
-	$SUDO rm -f /usr/local/bin/dwl-session
-	$SUDO install -Dm644 "$SRC/desktop/dwl.desktop"   /usr/share/wayland-sessions/dwl.desktop
+	# /usr/bin so ly's PATH (which lists /usr/bin before /usr/local/bin) picks
+	# up the dbus-wrapping launcher.
+	$SUDO install -Dm755 "$SRC/scripts/dwlarp"         /usr/bin/dwlarp
+	$SUDO install -Dm644 "$SRC/desktop/dwlarp.desktop" /usr/share/wayland-sessions/dwlarp.desktop
+	# Drop legacy entries from earlier installs.
+	$SUDO rm -f /usr/local/bin/dwl-session /usr/bin/dwl-session \
+		/usr/share/wayland-sessions/dwl.desktop
 
-	# Mullvad WireGuard helpers — root-owned on /usr/local/bin so sudoers can
-	# whitelist them by absolute path. Bootstrap with:
-	#   sudo mullvad-wg-setup <ACCOUNT_NUMBER>
-	$SUDO install -Dm755 "$SRC/scripts/mullvad-wg-setup" /usr/local/bin/mullvad-wg-setup
-	$SUDO install -Dm755 "$SRC/scripts/mullvad-vpn"      /usr/local/bin/mullvad-vpn
+	# Mullvad helpers — root-owned in /usr/local/bin so sudoers whitelists by
+	# absolute path. Bootstrap once: sudo mullvad-wg-setup <ACCOUNT_NUMBER>.
+	$SUDO install -Dm755 "$SRC/scripts/mullvad-wg-setup"  /usr/local/bin/mullvad-wg-setup
+	$SUDO install -Dm755 "$SRC/scripts/mullvad-vpn"       /usr/local/bin/mullvad-vpn
 	$SUDO install -Dm440 "$SRC/assets/sudoers-ws-mullvad" /etc/sudoers.d/ws-mullvad
 
-	# elogind sleep hook: unblock wifi+bluetooth on resume from hibernate.
-	# Lid-close → hibernate goes through elogind (not zzz), so /etc/zzz.d/*
-	# hooks never fire — this is the path elogind actually invokes. The hook
-	# also retries in the background to catch delayed firmware rfkill events
-	# (hp_wmi on HP laptops).
+	# elogind sleep hook: re-unblock wifi+bluetooth on resume; lid-close →
+	# hibernate skips /etc/zzz.d/. Background retries catch delayed firmware
+	# rfkill events (hp_wmi).
 	$SUDO install -Dm755 "$SRC/assets/elogind-rfkill-unblock" \
 		/usr/libexec/elogind/system-sleep/99-rfkill-unblock
 }
@@ -295,47 +292,16 @@ install_nerd_fonts() {
 }
 
 install_fonts() {
-	# Try distro package first (single, well-known nerd-firacode package); fall
-	# back to GitHub release zip if not packaged or wrong name.
-	case "$DISTRO" in
-		arch)
-			pacman -Si ttf-firacode-nerd >/dev/null 2>&1 \
-				&& $SUDO pacman -S --needed --noconfirm ttf-firacode-nerd || true ;;
-		void)
-			# Void's nerd-font pkgs vary by version; probe a few names.
-			for p in nerd-fonts-firacode-ttf nerd-fonts-firacode font-firacode-nerd; do
-				if xbps-query -R "$p" >/dev/null 2>&1; then
-					$SUDO xbps-install -Sy "$p" && break
-				fi
-			done ;;
-		debian)
-			apt-cache show fonts-firacode-nerd >/dev/null 2>&1 \
-				&& $SUDO apt-get install -y --no-install-recommends fonts-firacode-nerd || true ;;
-	esac
+	# Distro nerd-font packages are either too coarse (Void's `nerd-fonts`
+	# meta-pkg pulls ~1 GB of fonts) or unreliable. Just fetch FiraCode.
 	font_present "FiraCode Nerd Font" || install_nerd_fonts
 	fc-cache -f >/dev/null 2>&1 || true
 	font_present "FiraCode Nerd Font" \
 		|| warn "FiraCode Nerd Font not detected — bar/foot may render boxes"
 }
 
-# ---- icons ----
-install_icons() {
-	case "$DISTRO" in
-		arch)   $SUDO pacman -S --needed --noconfirm papirus-icon-theme || warn "papirus failed" ;;
-		debian) $SUDO apt-get install -y --no-install-recommends papirus-icon-theme || warn "papirus failed" ;;
-		void)   $SUDO xbps-install -Sy Papirus-icon-theme 2>/dev/null \
-			|| $SUDO xbps-install -Sy papirus-icon-theme 2>/dev/null \
-			|| warn "papirus not in repos" ;;
-	esac
-}
-
-# ---- ly greeter (opt-in via WITH_LY=1) ----
-install_ly() {
-	case "$DISTRO" in
-		arch)   $SUDO pacman -S --needed --noconfirm ly || { warn "ly install failed"; return; } ;;
-		void)   $SUDO xbps-install -Sy ly || { warn "ly install failed"; return; } ;;
-		debian) warn "ly is not packaged on Debian"; return ;;
-	esac
+# ---- ly greeter ----
+ly_enable() {
 	[ -f /etc/ly/config.ini ] || $SUDO install -Dm644 "$SRC/assets/ly.config.ini" /etc/ly/config.ini
 	if [ ! -s /etc/ly/save.ini ]; then
 		u=${SUDO_USER:-$(id -un)}
@@ -344,10 +310,41 @@ install_ly() {
 			| $SUDO tee /etc/ly/save.ini >/dev/null
 	fi
 	case "$DISTRO" in
-		arch) $SUDO systemctl enable ly ;;
-		void) [ -L /var/service/ly ] || $SUDO ln -s /etc/sv/ly /var/service/ly ;;
+		arch)   $SUDO systemctl enable ly ;;
+		debian) have systemctl && $SUDO systemctl enable ly || true ;;
+		void)   [ -L /var/service/ly ] || $SUDO ln -s /etc/sv/ly /var/service/ly ;;
 	esac
 	say "ly enabled — reboot to take effect"
+}
+
+ly_build_from_source() {
+	# Void/Debian don't package ly; build it via zig.
+	case "$DISTRO" in
+		void)   $SUDO xbps-install -Sy zig pam-devel libxcb-devel >/dev/null 2>&1 || true ;;
+		debian) $SUDO apt-get install -y --no-install-recommends zig libpam0g-dev libxcb1-dev 2>/dev/null || true ;;
+	esac
+	have zig || { warn "ly: zig unavailable on $DISTRO — skipping"; return 1; }
+	tmp=$(mktemp -d)
+	git clone --depth=1 https://github.com/fairyglade/ly.git "$tmp/ly" \
+		|| { warn "ly: clone failed"; return 1; }
+	(
+		cd "$tmp/ly"
+		zig build
+		case "$DISTRO" in
+			void) $SUDO zig build installexe -Dinit_system=runit ;;
+			*)    $SUDO zig build installexe -Dinit_system=systemd ;;
+		esac
+	) || { warn "ly: build failed (zig version mismatch?)"; return 1; }
+}
+
+install_ly() {
+	have ly && { say "ly already installed"; ly_enable; return; }
+	case "$DISTRO" in
+		arch) $SUDO pacman -S --needed --noconfirm ly 2>/dev/null && have ly && { ly_enable; return; } ;;
+		void) $SUDO xbps-install -Sy ly 2>/dev/null && have ly && { ly_enable; return; } ;;
+	esac
+	say "building ly from source"
+	ly_build_from_source && ly_enable
 }
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -360,7 +357,7 @@ if [ "$REBUILD" -eq 1 ]; then
 	exit 0
 fi
 
-say "wayland-suckless installer — $DISTRO"
+say "dwlarp installer — $DISTRO"
 [ "$SKIP_DEPS" -eq 0 ] && { say "installing distro packages"; install_deps; }
 say "ensuring wlroots 0.19"; ensure_wlroots
 export PKG_CONFIG_PATH="$WLR_PREFIX/lib/pkgconfig:$WLR_PREFIX/lib64/pkgconfig:$WLR_PREFIX/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH:-}"
@@ -368,12 +365,11 @@ install_dmenu_wl
 build_all
 say "seeding configs and scripts"; seed_configs; install_scripts
 say "installing fonts"; install_fonts
-say "installing icons"; install_icons
-[ "${WITH_LY:-0}" = 1 ] && { say "installing ly greeter"; install_ly; }
+say "installing ly greeter"; install_ly
 
 case ":${PATH}:" in *":$HOME/.local/bin:"*) ;;
 	*) warn "$HOME/.local/bin not in PATH — add it to your shell rc" ;;
 esac
 
-say "done — pick 'dwl' at the greeter (or run dwl-session from a TTY)"
+say "done — pick 'dwlarp' at the greeter (or run dwlarp from a TTY)"
 say "rebuild after editing config.h:  ./install.sh --rebuild"
