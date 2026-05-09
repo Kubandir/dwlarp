@@ -10,9 +10,14 @@ _restart() {
     "$@" &
 }
 
+# Cursor theme/size — written by the installer from config.h.
+[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/dwlarp/env" ] \
+    && . "${XDG_CONFIG_HOME:-$HOME/.config}/dwlarp/env"
+
 # Export wayland env to dbus / systemd user so portals & spawned daemons see it.
 dbus-update-activation-environment --systemd \
-    DISPLAY WAYLAND_DISPLAY XDG_CURRENT_DESKTOP=dwl XDG_SESSION_TYPE=wayland 2>/dev/null
+    DISPLAY WAYLAND_DISPLAY XDG_CURRENT_DESKTOP=dwl XDG_SESSION_TYPE=wayland \
+    XCURSOR_THEME XCURSOR_SIZE 2>/dev/null
 
 # Audio — leave an existing PipeWire instance alone (systemd --user already
 # manages it on Debian/GNOME). Only start it if nothing is running and the
@@ -40,6 +45,31 @@ else
 fi
 
 command -v mako >/dev/null 2>&1 && _restart mako mako
+
+# Mullvad VPN — connect by default at login (fastest CZ relay). Backgrounded
+# (handshake takes a couple seconds); the result is surfaced via mako so a
+# missing relay cache or sudoers permission isn't silent. ws-hud's reveal-
+# after-quiet probe re-checks status so the toggle eventually catches up.
+if command -v mullvad-vpn >/dev/null 2>&1; then
+    (
+        if out=$(sudo -n /usr/local/bin/mullvad-vpn up 2>&1); then
+            host=$(printf '%s\n' "$out" | awk '/^connected via/ {print $3; exit}')
+            notify-send -a Mullvad -i network-vpn 'Mullvad VPN' \
+                "Connected${host:+ — $host}" 2>/dev/null || true
+        else
+            # Most common failure: relays cache missing — point the user at the
+            # bootstrap step rather than letting the toggle silently stay off.
+            case "$out" in
+                *"missing"*|*"legacy format"*)
+                    notify-send -a Mullvad -i dialog-warning 'Mullvad VPN' \
+                        'Run: sudo mullvad-wg-setup <ACCOUNT>' 2>/dev/null || true ;;
+                *)
+                    notify-send -a Mullvad -i dialog-warning 'Mullvad VPN' \
+                        "Auto-connect failed: $out" 2>/dev/null || true ;;
+            esac
+        fi
+    ) &
+fi
 
 command -v ws-hud >/dev/null 2>&1 && _restart ws-hud ws-hud
 

@@ -43,7 +43,7 @@ dwl-ipc-unstable-v2-protocol.c:
 	$(WAYLAND_SCANNER) private-code protocols/dwl-ipc-unstable-v2.xml $@
 dwl-ipc-unstable-v2-protocol.o: dwl-ipc-unstable-v2-protocol.h
 
-dwlb.o: utf8.h config.h xdg-shell-protocol.h xdg-output-unstable-v1-protocol.h wlr-layer-shell-unstable-v1-protocol.h dwl-ipc-unstable-v2-protocol.h
+dwlb.o: utf8.h config.h ../config.h xdg-shell-protocol.h xdg-output-unstable-v1-protocol.h wlr-layer-shell-unstable-v1-protocol.h dwl-ipc-unstable-v2-protocol.h
 
 # Protocol dependencies
 dwlb: xdg-shell-protocol.o xdg-output-unstable-v1-protocol.o wlr-layer-shell-unstable-v1-protocol.o dwl-ipc-unstable-v2-protocol.o

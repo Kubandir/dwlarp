@@ -3,26 +3,31 @@
 # the lid does not trigger hibernate. Driven by the HUD toggle.
 #
 #   ws-hud-lidlock on | off | status
+#
+# Identifies its own inhibit process by the --who= tag (no pid file): when the
+# script is invoked from a backgrounded `setsid sh -c …` context $! captures the
+# transient setsid wrapper, not the long-lived inhibit, which made the previous
+# pid-file approach silently lose the off toggle.
 
 set -eu
 
-PIDF="${XDG_RUNTIME_DIR:-/tmp}/ws-hud-lidlock.pid"
 INHIBIT=$(command -v elogind-inhibit || command -v systemd-inhibit) \
 	|| { echo "need elogind-inhibit or systemd-inhibit" >&2; exit 1; }
 
-alive() { [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF" 2>/dev/null)" 2>/dev/null; }
-stop()  { [ -f "$PIDF" ] && { kill "$(cat "$PIDF")" 2>/dev/null || :; rm -f "$PIDF"; }; }
+WHO=ws-hud-lidlock
+PAT="$INHIBIT --what=handle-lid-switch --who=$WHO"
 
 case "${1:-}" in
 	on)
-		alive && exit 0
-		stop
-		setsid sh -c 'exec "$0" \
-			--what=handle-lid-switch --who=ws-hud \
+		pgrep -f "$PAT" >/dev/null 2>&1 && exit 0
+		"$INHIBIT" --what=handle-lid-switch --who="$WHO" \
 			--why="user override (lid-lock toggle)" --mode=block \
-			sleep infinity' "$INHIBIT" </dev/null >/dev/null 2>&1 &
-		echo $! > "$PIDF" ;;
-	off)    stop ;;
-	status) alive && echo on || echo off ;;
-	*)      echo "usage: ${0##*/} on|off|status" >&2; exit 2 ;;
+			sleep infinity </dev/null >/dev/null 2>&1 &
+		;;
+	off)
+		pkill -f "$PAT" 2>/dev/null || : ;;
+	status)
+		pgrep -f "$PAT" >/dev/null 2>&1 && echo on || echo off ;;
+	*)
+		echo "usage: ${0##*/} on|off|status" >&2; exit 2 ;;
 esac

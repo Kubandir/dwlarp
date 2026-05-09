@@ -47,7 +47,7 @@ Optional env vars:
 | `~/.local/share/dwl/wallpaper.png`            | shipped wallpaper                   |
 
 A web browser is **not** installed — the `Win+S` keybind launches whatever
-`WS_BROWSER_CMD` is set to in `config.h` (default: `helium`). Edit it to
+`WS_BROWSER_CMD` is set to in `config.h` (default: `librewolf`). Edit it to
 `firefox` or `chromium` if you prefer, then `./install.sh --rebuild`.
 
 ## wlroots

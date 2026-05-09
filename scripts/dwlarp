@@ -6,6 +6,13 @@
 # `dbus-run-session` wraps the whole session so apps that need a user dbus
 # bus (bluetuith, gnome-keyring, portals) can find one. If a bus is already
 # inherited from the seat (elogind/systemd-logind) we skip the wrapper.
+#
+# Source cursor theme/size HERE (before dwl spawns) — wlroots reads
+# XCURSOR_THEME at compositor startup to pick the root cursor, and dwl-autostart
+# is a child of dwl so it can't influence dwl's own env.
+[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/dwlarp/env" ] \
+	&& . "${XDG_CONFIG_HOME:-$HOME/.config}/dwlarp/env"
+
 DWL_CMD='dwl -s "$HOME/.local/bin/dwl-autostart & dwlb & sleep 0.3; $HOME/.local/bin/dwlb-leftstatus | dwlb -leftstatus-stdin all & $HOME/.local/bin/dwlb-status | dwlb -status-stdin all"'
 
 if [ -n "$DBUS_SESSION_BUS_ADDRESS" ] || ! command -v dbus-run-session >/dev/null 2>&1; then

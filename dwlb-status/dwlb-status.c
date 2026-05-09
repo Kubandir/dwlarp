@@ -2,15 +2,15 @@
  *
  * One 1-second timerfd is the *sole* render driver. Slow metrics use
  * subdivided cadences:
- *     CPU, brightness   every  1 s
+ *     CPU, VPN          every  1 s
  *     wifi              every  5 s
  *     battery           every 30 s
  *     disk              every  5 min
  *
  * PulseAudio subscriptions update a cached volume — they never render.
  * The next tick paints the new value.  No inotify, no forks, no busy loops.
- * Idle CPU is unmeasurable; under sustained brightness/volume key-mash CPU
- * stays flat because input does not drive output.
+ * Idle CPU is unmeasurable; under sustained volume key-mash CPU stays flat
+ * because input does not drive output.
  *
  * Build:  cc -O2 -Wall $(pkg-config --cflags libpulse) \
  *            -o dwlb-status dwlb-status.c $(pkg-config --libs libpulse)
@@ -48,12 +48,9 @@
 #define I_VOL_LO    "\xf3\xb0\x95\xbf"
 #define I_VOL_OFF   "\xf3\xb0\x9d\x9f"
 #define I_WIFI_OFF  "\xf3\xb0\xa4\xab"
+#define I_VPN_ON    "\xf3\xb0\x92\x98"   /* nf-md-shield     U+F0498 */
+#define I_VPN_OFF   "\xf3\xb0\xa6\x9e"   /* nf-md-shield_off U+F099E */
 
-static const char *I_BRI[7] = {
-	"\xf3\xb0\x83\x99","\xf3\xb0\x83\x9a","\xf3\xb0\x83\x9b",
-	"\xf3\xb0\x83\x9c","\xf3\xb0\x83\x9d","\xf3\xb0\x83\x9e",
-	"\xf3\xb0\x83\x9f"
-};
 static const char *I_WIFI[4] = {
 	"\xf3\xb0\xa4\x9f","\xf3\xb0\xa4\xa2",
 	"\xf3\xb0\xa4\xa5","\xf3\xb0\xa4\xa8"
@@ -68,13 +65,12 @@ static int  cached_cpu_temp = -1;      /* °C, -1 = unknown */
 static int  cached_disk    = 0;
 static int  cached_bat_pct = -1;
 static int  cached_bat_chg = 0;
-static int  cached_bri_idx = 3;
+static int  cached_vpn     = 0;
 static const char *cached_wifi_icon = I_WIFI_OFF;
 static int  cached_vol     = -1;
 static int  cached_muted   = 0;
 
 static char bat_dev[256] = "";
-static char bri_dev[256] = "";
 static char cpu_temp_path[320] = "";   /* full path to coretemp Package id 0 */
 
 static long long prev_busy, prev_total;
@@ -202,31 +198,11 @@ static void sample_bat(void) {
 	}
 }
 
-static void detect_bri(void) {
-	if (bri_dev[0]) return;
-	DIR *d = opendir("/sys/class/backlight"); if (!d) return;
-	struct dirent *e;
-	while ((e = readdir(d))) {
-		if (e->d_name[0] != '.') {
-			snprintf(bri_dev, sizeof bri_dev, "%s", e->d_name);
-			break;
-		}
-	}
-	closedir(d);
-}
-
-static void sample_bri(void) {
-	detect_bri();
-	if (!bri_dev[0]) return;
-	char path[384];
-	snprintf(path, sizeof path, "/sys/class/backlight/%s/actual_brightness", bri_dev);
-	int b = read_int_file(path);
-	snprintf(path, sizeof path, "/sys/class/backlight/%s/max_brightness", bri_dev);
-	int m = read_int_file(path);
-	if (b < 0 || m <= 0) return;
-	int pct = b * 100 / m;
-	cached_bri_idx = pct >= 88 ? 6 : pct >= 75 ? 5 : pct >= 60 ? 4
-	              : pct >= 45 ? 3 : pct >= 30 ? 2 : pct >= 15 ? 1 : 0;
+/* The mullvad WireGuard interface only exists in /sys/class/net while
+ * wg-quick has the tunnel up; PostDown removes it. access(2) is a single
+ * stat — cheaper than ip-link forks and matches what mullvad-vpn(1) checks. */
+static void sample_vpn(void) {
+	cached_vpn = access("/sys/class/net/mullvad", F_OK) == 0;
 }
 
 static void sample_wifi(void) {
@@ -289,8 +265,8 @@ static void render(void) {
 	APPEND("%s   ", (cached_muted || cached_vol < 0) ? I_VOL_OFF
 	              : cached_vol <= 33 ? I_VOL_LO : I_VOL_HI);
 #endif
-#if WS_STATUS_BRIGHTNESS
-	APPEND("%s   ", I_BRI[cached_bri_idx]);
+#if WS_STATUS_VPN
+	APPEND("%s   ", cached_vpn ? I_VPN_ON : I_VPN_OFF);
 #endif
 #if WS_STATUS_WIFI
 	APPEND("%s ", cached_wifi_icon);
@@ -381,7 +357,7 @@ static void on_tick(pa_mainloop_api *a, pa_io_event *e, int fd,
 	if (read(fd, &exp, sizeof exp) != sizeof exp) return;
 	sample_cpu();
 	sample_cpu_temp();
-	sample_bri();
+	sample_vpn();
 	if (tick_n % WS_STATUS_CADENCE_WIFI == 0) sample_wifi();
 	if (tick_n % WS_STATUS_CADENCE_BAT  == 0) sample_bat();
 	if (tick_n % WS_STATUS_CADENCE_DISK == 0) sample_disk();
@@ -400,7 +376,7 @@ static void on_signal(pa_mainloop_api *a, pa_io_event *e, int fd,
 			return;
 		}
 		if (si.ssi_signo == SIGUSR1) {
-			sample_cpu(); sample_cpu_temp(); sample_bri(); sample_wifi();
+			sample_cpu(); sample_cpu_temp(); sample_vpn(); sample_wifi();
 			sample_bat(); sample_disk();
 			render();
 		}
@@ -436,7 +412,7 @@ int main(void) {
 		pa_api_g->io_new(pa_api_g, sfd, PA_IO_EVENT_INPUT, on_signal, NULL);
 
 	/* Prime cache so the first paint isn't all zeros */
-	sample_cpu(); sample_cpu_temp(); sample_bri(); sample_wifi();
+	sample_cpu(); sample_cpu_temp(); sample_vpn(); sample_wifi();
 	sample_bat(); sample_disk();
 	render();
 

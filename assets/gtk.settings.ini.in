@@ -1,0 +1,10 @@
+[Settings]
+gtk-theme-name=@WS_GTK_THEME@
+gtk-icon-theme-name=@WS_ICON_THEME@
+gtk-cursor-theme-name=@WS_CURSOR_THEME@
+gtk-cursor-theme-size=@WS_CURSOR_SIZE@
+gtk-font-name=@WS_GTK_FONT@
+gtk-application-prefer-dark-theme=1
+gtk-button-images=0
+gtk-menu-images=0
+gtk-enable-animations=1

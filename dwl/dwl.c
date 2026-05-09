@@ -3103,8 +3103,13 @@ setup(void)
 	 * Xcursor themes to source cursor images from and makes sure that cursor
 	 * images are available at all scale factors on the screen (necessary for
 	 * HiDPI support). Scaled cursors will be loaded with each output. */
-	cursor_mgr = wlr_xcursor_manager_create(NULL, 18);
-	setenv("XCURSOR_SIZE", "18", 1);
+	cursor_mgr = wlr_xcursor_manager_create(WS_CURSOR_THEME, WS_CURSOR_SIZE);
+	{
+		char buf[16];
+		snprintf(buf, sizeof(buf), "%d", WS_CURSOR_SIZE);
+		setenv("XCURSOR_THEME", WS_CURSOR_THEME, 1);
+		setenv("XCURSOR_SIZE", buf, 1);
+	}
 
 	/*
 	 * wlr_cursor *only* displays an image on screen. It does not move around

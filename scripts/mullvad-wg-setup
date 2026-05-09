@@ -1,18 +1,78 @@
 #!/bin/sh
-# mullvad-wg-setup — one-shot bootstrap for Mullvad WireGuard.
+# mullvad-wg-setup — bootstrap a Mullvad WireGuard device, or refresh the
+# cached relay list.
 #
-#   sudo mullvad-wg-setup <ACCOUNT_NUMBER>
-#
-# Generates a wg keypair, registers it with Mullvad, caches the per-device
-# assignment + current CZ relay list. Re-running rotates the key.
+#   sudo mullvad-wg-setup <ACCOUNT_NUMBER>   full bootstrap: keypair, register,
+#                                            assigned IPs, and relay list.
+#                                            Re-running rotates the key and
+#                                            registers a NEW device (counts
+#                                            against the 5-device limit).
+#   sudo mullvad-wg-setup relays             refresh /etc/wireguard/mullvad.relays
+#                                            only. No account / token / key
+#                                            rotation. Safe to call repeatedly.
 #
 # State (root-owned, 0600 where sensitive):
 #   /etc/wireguard/mullvad.{key,addr,relays}
+#
+# relays format (TAB-separated, one relay per line):
+#   hostname \t pubkey \t ipv4 \t cc \t country_name \t city_code \t city_name
 
 set -eu
 
 [ "$(id -u)" = 0 ] || { echo "must run as root" >&2; exit 1; }
-[ $# -eq 1 ] || { echo "usage: $0 <ACCOUNT_NUMBER>" >&2; exit 2; }
+
+DIR=/etc/wireguard
+# Public relay catalogue — kept in /run so non-root callers (mullvad-menu) can
+# read it. /etc/wireguard is 0700 by design and we don't want to relax that.
+RELAYS=/run/mullvad.relays
+
+refresh_relays() {
+	for c in curl jq; do
+		command -v "$c" >/dev/null || { echo "need $c" >&2; exit 1; }
+	done
+	mkdir -p "$DIR"
+	chmod 700 "$DIR"
+	echo "fetching global relay list…"
+	# v1/relays shape:
+	#   { "locations": { "cz-prg": {country, city, ...}, … },
+	#     "wireguard": { "relays": [ {hostname, location, public_key,
+	#                                 ipv4_addr_in, active, …}, … ] } }
+	# Flatten the active wireguard relays and join country/city from .locations
+	# so mullvad-menu can render names without its own lookup table.
+	curl -fsS --retry 2 --max-time 15 https://api.mullvad.net/app/v1/relays \
+		| jq -r '
+		  .locations as $loc
+		  | .wireguard.relays[]
+		  | select(.active == true)
+		  | (.location // "") as $lk
+		  | ($loc[$lk] // {}) as $info
+		  | ($lk | split("-")) as $parts
+		  | [
+		      .hostname,
+		      (.public_key // ""),
+		      .ipv4_addr_in,
+		      ($parts[0] // ""),
+		      ($info.country // ""),
+		      ($parts[1] // ""),
+		      ($info.city // "")
+		    ] | @tsv
+		  ' > "$RELAYS.tmp"
+	[ -s "$RELAYS.tmp" ] || {
+		rm -f "$RELAYS.tmp"
+		echo "no relays returned (api shape changed?)" >&2; exit 1
+	}
+	mv -f "$RELAYS.tmp" "$RELAYS"
+	chmod 644 "$RELAYS"
+	CZ_N=$(awk -F'\t' '$4=="cz"' "$RELAYS" | wc -l)
+	TOTAL=$(wc -l < "$RELAYS")
+	echo "$TOTAL relays cached ($CZ_N CZ)."
+}
+
+case "${1:-}" in
+	relays) refresh_relays; exit 0 ;;
+	"")     echo "usage: $0 <ACCOUNT_NUMBER> | relays" >&2; exit 2 ;;
+esac
+
 ACCOUNT=$1
 case "$ACCOUNT" in *[!0-9]*|"") echo "account must be digits" >&2; exit 2 ;; esac
 
@@ -20,7 +80,6 @@ for c in wg curl jq; do
 	command -v "$c" >/dev/null || { echo "need $c" >&2; exit 1; }
 done
 
-DIR=/etc/wireguard
 mkdir -p "$DIR"
 chmod 700 "$DIR"
 
@@ -50,13 +109,5 @@ printf '%s\n' "$PRIV"                   > "$DIR/mullvad.key"
 printf '%s\n' "$ADDR4${ADDR6:+,$ADDR6}" > "$DIR/mullvad.addr"
 chmod 600 "$DIR/mullvad.key" "$DIR/mullvad.addr"
 
-echo "fetching CZ relay list…"
-curl -fsS --retry 2 --max-time 15 https://api.mullvad.net/app/v1/relays \
-	| jq -r '.wireguard.relays[] | select(.hostname|startswith("cz-"))
-	         | "\(.hostname) \(.public_key) \(.ipv4_addr_in)"' \
-	> "$DIR/mullvad.relays"
-[ -s "$DIR/mullvad.relays" ] || { echo "no CZ relays returned" >&2; exit 1; }
-chmod 644 "$DIR/mullvad.relays"
-
-echo "done. $(wc -l < "$DIR/mullvad.relays") CZ relays cached."
-echo "now: sudo mullvad-vpn up"
+refresh_relays
+echo "done. now: sudo mullvad-vpn up"

@@ -67,28 +67,30 @@ PKGS_void="
 	wayland-devel wayland-protocols libxkbcommon-devel libinput-devel
 	pixman-devel libxcb-devel xcb-util-wm-devel libdrm-devel
 	libseat-devel hwids libdisplay-info-devel pulseaudio-devel
-	pango-devel cairo-devel glib-devel
+	pango-devel cairo-devel glib-devel ncurses-devel
 	elogind
 	foot swaybg mako brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr ImageMagick
 	xdg-desktop-portal xdg-desktop-portal-gtk
-	adwaita-icon-theme hicolor-icon-theme
+	adwaita-icon-theme hicolor-icon-theme papirus-icon-theme papirus-folders
+	sassc
 	xorg-server-xwayland fontconfig
 	wlsunset bluetuith impala pulsemixer
-	wireguard-tools jq
+	wireguard-tools jq libnotify
 	curl unzip"
 PKGS_arch="
 	base-devel git pkgconf meson ninja
 	wayland wayland-protocols libxkbcommon libinput pixman
 	libxcb xcb-util-wm libdrm seatd hwdata libdisplay-info libpulse
-	pango cairo glib2
+	pango cairo glib2 ncurses
 	foot swaybg mako brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr imagemagick
 	xdg-desktop-portal xdg-desktop-portal-gtk
-	adwaita-icon-theme hicolor-icon-theme
+	adwaita-icon-theme hicolor-icon-theme papirus-icon-theme
+	sassc
 	xorg-xwayland fontconfig
 	wlsunset impala pulsemixer bluez-utils
-	wireguard-tools jq
+	wireguard-tools jq libnotify
 	curl unzip"
 PKGS_debian="
 	build-essential git pkg-config meson ninja-build
@@ -98,13 +100,14 @@ PKGS_debian="
 	libxcb-composite0-dev libxcb-xfixes0-dev libxcb-render0-dev
 	libdrm-dev libseat-dev libudev-dev libgbm-dev libegl1-mesa-dev libgles2-mesa-dev
 	libdisplay-info-dev hwdata libpulse-dev
-	libpango1.0-dev libcairo2-dev libglib2.0-dev
+	libpango1.0-dev libcairo2-dev libglib2.0-dev libncursesw5-dev
 	foot swaybg mako-notifier brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr imagemagick
 	xdg-desktop-portal xdg-desktop-portal-gtk xwayland
-	adwaita-icon-theme hicolor-icon-theme
+	adwaita-icon-theme hicolor-icon-theme papirus-icon-theme
+	sassc
 	wlsunset pulsemixer bluez
-	wireguard-tools jq
+	wireguard-tools jq libnotify-bin
 	fontconfig curl unzip ca-certificates"
 PIPEWIRE_void="pipewire wireplumber"
 PIPEWIRE_arch="pipewire pipewire-pulse wireplumber"
@@ -187,19 +190,132 @@ install_dmenu_wl() {
 	have dmenu-wl || die "dmenu-wl built but not on PATH"
 }
 
+# ---- wayfreeze (Wayland screen-freeze for screenshot-area) ----
+# Cargo-built (not in distro repos). Upstream 0.2.0 hardcodes exit-on-Esc and
+# exit-on-mouse-up handlers, so the first Esc kills wayfreeze before slurp
+# sees it — we strip those state.exit assignments at build time.
+install_wayfreeze() {
+	have wayfreeze && return
+	have cargo || { warn "cargo missing — wayfreeze skipped (screenshot will use live capture)"; return; }
+	say "building wayfreeze (patched: no exit-on-input)"
+	tmp=$(mktemp -d)
+	if ! git clone --depth=1 https://github.com/Jappie3/wayfreeze "$tmp/wayfreeze" >/dev/null 2>&1; then
+		warn "wayfreeze clone failed"; rm -rf "$tmp"; return
+	fi
+	sed -i '/Mouse button released - exiting/{n;d;}' "$tmp/wayfreeze/src/main.rs"
+	sed -i '/Escape pressed - exiting/{n;d;}'         "$tmp/wayfreeze/src/main.rs"
+	(cd "$tmp/wayfreeze" && cargo build --release --quiet >/dev/null 2>&1) \
+		&& install -Dm755 "$tmp/wayfreeze/target/release/wayfreeze" "$HOME/.local/bin/wayfreeze" \
+		|| warn "wayfreeze build failed"
+	rm -rf "$tmp"
+}
+
+# ---- themes (Graphite GTK + Bibata cursor) ----
+# Graphite is regenerated from main when missing (no version pin — theme files
+# stable, sassc compiles SCSS at install). Bibata pins a release tarball and
+# extracts only the requested cursor variant.
+BIBATA_VER=v2.0.7
+ensure_themes() {
+	# Graphite-Dark (--tweaks black). Skip if a fully-built variant already exists.
+	if [ ! -f "$HOME/.themes/Graphite-Dark/gtk-3.0/gtk.css" ]; then
+		# Older partial install? Wipe the empty shell so the installer can recreate it.
+		rm -rf "$HOME/.themes/Graphite-Dark"
+		if ! have sassc; then
+			warn "sassc missing — Graphite cannot compile CSS; install sassc and re-run"
+		else
+			say "installing Graphite-gtk-theme (Dark/black)"
+			tmp=$(mktemp -d)
+			if git clone --depth=1 https://github.com/vinceliuice/Graphite-gtk-theme.git \
+					"$tmp/graphite" >/dev/null 2>&1; then
+				(cd "$tmp/graphite" && \
+					./install.sh -d "$HOME/.themes" -t default -c dark \
+						-s standard --tweaks black >/dev/null 2>&1) \
+					|| warn "graphite install.sh failed"
+			else
+				warn "graphite clone failed — check network"
+			fi
+			rm -rf "$tmp"
+		fi
+	fi
+
+	# Bibata-Modern-Ice — single variant only.
+	if [ ! -d "$HOME/.icons/Bibata-Modern-Ice" ]; then
+		say "installing Bibata-Modern-Ice cursor ($BIBATA_VER)"
+		tmp=$(mktemp -d)
+		url="https://github.com/ful1e5/Bibata_Cursor/releases/download/$BIBATA_VER/Bibata-Modern-Ice.tar.xz"
+		if fetch "$url" "$tmp/bibata.tar.xz"; then
+			mkdir -p "$HOME/.icons"
+			tar -xf "$tmp/bibata.tar.xz" -C "$HOME/.icons" \
+				|| warn "bibata extract failed"
+		else
+			warn "bibata download failed — install curl or wget"
+		fi
+		rm -rf "$tmp"
+	fi
+
+	# Defensive: a partial user-level Papirus-Dark in ~/.local/share/icons gets
+	# preferred over /usr/share/icons and crashes apps when files are missing.
+	if [ -d "$HOME/.local/share/icons/Papirus-Dark" ] \
+	   && [ ! -d "$HOME/.local/share/icons/Papirus-Dark/scalable" ]; then
+		warn "removing partial $HOME/.local/share/icons/Papirus-Dark (shadows /usr/share)"
+		rm -rf "$HOME/.local/share/icons/Papirus-Dark"
+	fi
+}
+
+# `install -D` but only when dst is missing or its contents differ. Pairs
+# with make's mtime tracking so `--rebuild` no-ops when nothing changed.
+# $1 may be empty (no-op prefix) or the value of $SUDO. Routing cmp through
+# the same prefix covers root-only destinations (e.g. /etc/sudoers.d).
+install_if_changed() {
+	# usage: install_if_changed [SUDO|""] MODE SRC DST
+	sc=$1 mode=$2 src=$3 dst=$4
+	$sc cmp -s "$src" "$dst" 2>/dev/null && return 0
+	$sc install -Dm"$mode" "$src" "$dst"
+}
+
+# Papirus-Dark folder accent. The tool is idempotent but rewrites thousands of
+# symlinks (~10s), so cache the last-applied color and short-circuit when it
+# hasn't changed. Full-install only — recoloring isn't part of the --rebuild
+# loop, and config.h-driven changes still apply on the next plain install.
+apply_papirus_color() {
+	have papirus-folders || return 0
+	[ -d /usr/share/icons/Papirus-Dark ] || return 0
+	color=$(read_str WS_PAPIRUS_FOLDER); color=${color:-grey}
+	cache="${XDG_CACHE_HOME:-$HOME/.cache}/dwlarp/papirus-folder-color"
+	[ "$(cat "$cache" 2>/dev/null)" = "$color" ] && return 0
+	say "applying papirus folder color ($color)"
+	if $SUDO papirus-folders -C "$color" -t Papirus-Dark >/dev/null 2>&1; then
+		mkdir -p "$(dirname "$cache")"
+		printf '%s\n' "$color" > "$cache"
+	else
+		warn "papirus-folders failed (color=$color)"
+	fi
+}
+
 # ---- C projects ----
-# Incremental: rely on make's mtime tracking. Pass FORCE=1 (or `--rebuild --force`)
-# to nuke artifacts and recompile from scratch.
-build() {
-	[ "${FORCE:-0}" = 1 ] && make -C "$1" clean >/dev/null 2>&1 || true
-	make -C "$1"
+# Incremental: make's mtime tracking handles the compile, and we skip the
+# `make install` copy entirely when the artifact already matches what's
+# installed. Pass FORCE=1 (or `--rebuild --force`) to nuke artifacts and
+# recompile from scratch.
+build_install() {
+	# usage: build_install [SUDO|""] NAME DIR DST PREFIX
+	sc=$1 name=$2 dir=$3 dst=$4 prefix=$5
+	say "building $name"
+	[ "${FORCE:-0}" = 1 ] && make -C "$dir" clean >/dev/null 2>&1 || true
+	make -C "$dir"
+	if $sc cmp -s "$dir/$name" "$dst" 2>/dev/null; then
+		printf '    %s up to date\n' "$name"
+		return 0
+	fi
+	$sc make -C "$dir" PREFIX="$prefix" install
 }
 build_all() {
-	say "building dwl";             build "$SRC/dwl";             $SUDO make -C "$SRC/dwl"             PREFIX=/usr install
-	say "building dwlb";            build "$SRC/dwlb";            $SUDO make -C "$SRC/dwlb"            PREFIX=/usr install
-	say "building dwlb-status";     build "$SRC/dwlb-status";     make -C "$SRC/dwlb-status"           PREFIX="$HOME/.local" install
-	say "building dwlb-leftstatus"; build "$SRC/dwlb-leftstatus"; make -C "$SRC/dwlb-leftstatus"       PREFIX="$HOME/.local" install
-	say "building ws-hud";          build "$SRC/ws-hud";          make -C "$SRC/ws-hud"                PREFIX="$HOME/.local" install
+	build_install "$SUDO" dwl             "$SRC/dwl"             /usr/bin/dwl                       /usr
+	build_install "$SUDO" dwlb            "$SRC/dwlb"            /usr/bin/dwlb                      /usr
+	build_install ""      dwlb-status     "$SRC/dwlb-status"     "$HOME/.local/bin/dwlb-status"     "$HOME/.local"
+	build_install ""      dwlb-leftstatus "$SRC/dwlb-leftstatus" "$HOME/.local/bin/dwlb-leftstatus" "$HOME/.local"
+	build_install ""      ws-hud          "$SRC/ws-hud"          "$HOME/.local/bin/ws-hud"          "$HOME/.local"
+	build_install "$SUDO" mullvad-menu    "$SRC/mullvad-menu"    /usr/local/bin/mullvad-menu        /usr/local
 }
 
 # ---- scripts (single source of truth, used by full install AND --rebuild) ----
@@ -207,27 +323,27 @@ SCRIPTS="dwl-autostart dwl-wallpaper dwl-autolayout dwl-watch-outputs screenshot
 install_scripts() {
 	mkdir -p "$HOME/.local/bin"
 	for s in $SCRIPTS; do
-		install -Dm755 "$SRC/scripts/$s" "$HOME/.local/bin/$s"
+		install_if_changed "" 755 "$SRC/scripts/$s" "$HOME/.local/bin/$s"
 	done
 	rm -f "$HOME/.local/bin/bemenu-desktop"  # legacy launcher
 	# /usr/bin so ly's PATH (which lists /usr/bin before /usr/local/bin) picks
 	# up the dbus-wrapping launcher.
-	$SUDO install -Dm755 "$SRC/scripts/dwlarp"         /usr/bin/dwlarp
-	$SUDO install -Dm644 "$SRC/desktop/dwlarp.desktop" /usr/share/wayland-sessions/dwlarp.desktop
+	install_if_changed "$SUDO" 755 "$SRC/scripts/dwlarp"         /usr/bin/dwlarp
+	install_if_changed "$SUDO" 644 "$SRC/desktop/dwlarp.desktop" /usr/share/wayland-sessions/dwlarp.desktop
 	# Drop legacy entries from earlier installs.
 	$SUDO rm -f /usr/local/bin/dwl-session /usr/bin/dwl-session \
 		/usr/share/wayland-sessions/dwl.desktop
 
 	# Mullvad helpers — root-owned in /usr/local/bin so sudoers whitelists by
 	# absolute path. Bootstrap once: sudo mullvad-wg-setup <ACCOUNT_NUMBER>.
-	$SUDO install -Dm755 "$SRC/scripts/mullvad-wg-setup"  /usr/local/bin/mullvad-wg-setup
-	$SUDO install -Dm755 "$SRC/scripts/mullvad-vpn"       /usr/local/bin/mullvad-vpn
-	$SUDO install -Dm440 "$SRC/assets/sudoers-ws-mullvad" /etc/sudoers.d/ws-mullvad
+	install_if_changed "$SUDO" 755 "$SRC/scripts/mullvad-wg-setup"  /usr/local/bin/mullvad-wg-setup
+	install_if_changed "$SUDO" 755 "$SRC/scripts/mullvad-vpn"       /usr/local/bin/mullvad-vpn
+	install_if_changed "$SUDO" 440 "$SRC/assets/sudoers-ws-mullvad" /etc/sudoers.d/ws-mullvad
 
 	# elogind sleep hook: re-unblock wifi+bluetooth on resume; lid-close →
 	# hibernate skips /etc/zzz.d/. Background retries catch delayed firmware
 	# rfkill events (hp_wmi).
-	$SUDO install -Dm755 "$SRC/assets/elogind-rfkill-unblock" \
+	install_if_changed "$SUDO" 755 "$SRC/assets/elogind-rfkill-unblock" \
 		/usr/libexec/elogind/system-sleep/99-rfkill-unblock
 }
 
@@ -261,6 +377,44 @@ seed_configs() {
 	wall=$(read_str WS_WALLPAPER); [ -z "$wall" ] && wall=assets/wallpaper.png
 	case "$wall" in /*) ;; *) wall="$SRC/$wall" ;; esac
 	[ -f "$wall" ] && install -Dm644 "$wall" "${XDG_DATA_HOME:-$HOME/.local/share}/dwl/wallpaper.png"
+
+	# GTK theme/icon/cursor wiring. Same content for gtk-3.0 and gtk-4.0;
+	# libadwaita ignores settings.ini for theming, so symlink the chosen
+	# theme's gtk-4.0 CSS in (Graphite supports this; not all themes do).
+	gtk_theme=$(read_str WS_GTK_THEME)
+	icon_theme=$(read_str WS_ICON_THEME)
+	cursor_theme=$(read_str WS_CURSOR_THEME)
+	cursor_size=$(read_num WS_CURSOR_SIZE)
+	gtk_font=$(read_str WS_GTK_FONT)
+
+	mkdir -p "$cfg/gtk-3.0" "$cfg/gtk-4.0" "$cfg/dwlarp"
+	for v in 3.0 4.0; do
+		sed -e "s|@WS_GTK_THEME@|$gtk_theme|g"       \
+		    -e "s|@WS_ICON_THEME@|$icon_theme|g"     \
+		    -e "s|@WS_CURSOR_THEME@|$cursor_theme|g" \
+		    -e "s|@WS_CURSOR_SIZE@|$cursor_size|g"   \
+		    -e "s|@WS_GTK_FONT@|$gtk_font|g"         \
+		    "$SRC/assets/gtk.settings.ini.in" > "$cfg/gtk-$v/settings.ini"
+	done
+	if [ -f "$HOME/.themes/$gtk_theme/gtk-4.0/gtk.css" ]; then
+		ln -sf "$HOME/.themes/$gtk_theme/gtk-4.0/gtk.css"      "$cfg/gtk-4.0/gtk.css"
+		ln -sf "$HOME/.themes/$gtk_theme/gtk-4.0/gtk-dark.css" "$cfg/gtk-4.0/gtk-dark.css"
+	fi
+
+	sed -e "s|@WS_CURSOR_THEME@|$cursor_theme|g" \
+	    -e "s|@WS_CURSOR_SIZE@|$cursor_size|g"   \
+	    "$SRC/assets/dwlarp.env.in" > "$cfg/dwlarp/env"
+
+	# gsettings — xdg-desktop-portal-gtk reads these to advertise the theme
+	# to portal-aware clients (librewolf chrome, electron, …). Failures
+	# (no dbus, no schema) are non-fatal — settings.ini still applies.
+	if have gsettings; then
+		gsettings set org.gnome.desktop.interface gtk-theme    "$gtk_theme"    2>/dev/null || true
+		gsettings set org.gnome.desktop.interface icon-theme   "$icon_theme"   2>/dev/null || true
+		gsettings set org.gnome.desktop.interface cursor-theme "$cursor_theme" 2>/dev/null || true
+		gsettings set org.gnome.desktop.interface cursor-size  "$cursor_size"  2>/dev/null || true
+		gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'   2>/dev/null || true
+	fi
 }
 
 # ---- fonts ----
@@ -352,6 +506,9 @@ install_ly() {
 if [ "$REBUILD" -eq 1 ]; then
 	say "rebuilding from $SRC"
 	build_all
+	ensure_themes
+	install_wayfreeze
+	seed_configs
 	install_scripts
 	say "done — log out and back in"
 	exit 0
@@ -363,6 +520,8 @@ say "ensuring wlroots 0.19"; ensure_wlroots
 export PKG_CONFIG_PATH="$WLR_PREFIX/lib/pkgconfig:$WLR_PREFIX/lib64/pkgconfig:$WLR_PREFIX/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH:-}"
 install_dmenu_wl
 build_all
+say "ensuring GTK/icon/cursor themes"; ensure_themes; apply_papirus_color
+install_wayfreeze
 say "seeding configs and scripts"; seed_configs; install_scripts
 say "installing fonts"; install_fonts
 say "installing ly greeter"; install_ly

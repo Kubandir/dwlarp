@@ -1,5 +1,6 @@
 /* ws-hud — hover-revealed HUD that slides down from the bar. */
 #define _GNU_SOURCE
+#include <errno.h>
 #include <fcft/fcft.h>
 #include <fcntl.h>
 #include <linux/input-event-codes.h>
@@ -14,6 +15,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/signalfd.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #include <wayland-client.h>
@@ -116,16 +118,17 @@ struct button {
 	int type;
 	const char *a;
 	const char *b;
+	const char *state_cmd;  /* startup probe — sets state from exit code */
 	uint32_t icon;
-	int state;        /* runtime; not in config */
+	int state;              /* runtime; not in config */
 };
 
 #ifndef WS_HUD_BUTTONS
 #define WS_HUD_BUTTONS \
-	{ CLICK,  NULL, NULL, 0xf015 }, \
-	{ CLICK,  NULL, NULL, 0xf001 }, \
-	{ TOGGLE, NULL, NULL, 0xf013 }, \
-	{ TOGGLE, NULL, NULL, 0xf011 }
+	{ CLICK,  NULL, NULL, NULL, 0xf015 }, \
+	{ CLICK,  NULL, NULL, NULL, 0xf001 }, \
+	{ TOGGLE, NULL, NULL, NULL, 0xf013 }, \
+	{ TOGGLE, NULL, NULL, NULL, 0xf011 }
 #endif
 
 static struct button buttons[] = { WS_HUD_BUTTONS };
@@ -210,6 +213,52 @@ run_cmd(const char *cmd)
 		execl("/bin/sh", "sh", "-c", cmd, (char*)NULL);
 		_exit(127);
 	}
+}
+
+/* Run cmd to completion and return its exit code (or -1 on fork/wait error).
+   Works regardless of whether SIGCHLD has been set to SIG_IGN: we restore
+   SIG_DFL for the duration of the wait, then drain any zombies that other
+   async run_cmd children left behind before putting SIG_IGN back. */
+static int
+run_cmd_sync(const char *cmd)
+{
+	if (!cmd) return -1;
+	struct sigaction old, def = { .sa_handler = SIG_DFL };
+	sigemptyset(&def.sa_mask);
+	sigaction(SIGCHLD, &def, &old);
+
+	pid_t pid = fork();
+	int rc = -1;
+	if (pid == 0) {
+		execl("/bin/sh", "sh", "-c", cmd, (char*)NULL);
+		_exit(127);
+	}
+	if (pid > 0) {
+		int st;
+		while (waitpid(pid, &st, 0) < 0)
+			if (errno != EINTR) break; else continue;
+		rc = WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+	}
+	while (waitpid(-1, NULL, WNOHANG) > 0)
+		;
+	sigaction(SIGCHLD, &old, NULL);
+	return rc;
+}
+
+static int64_t last_state_probe_ms;
+
+/* Returns 1 if any button's state changed (caller can repaint). */
+static int
+probe_button_states(void)
+{
+	int changed = 0;
+	for (int i = 0; i < BTN_COUNT; i++) {
+		if (!buttons[i].state_cmd) continue;
+		int s = (run_cmd_sync(buttons[i].state_cmd) == 0);
+		if (s != buttons[i].state) { buttons[i].state = s; changed = 1; }
+	}
+	last_state_probe_ms = now_ms();
+	return changed;
 }
 
 static void
@@ -491,6 +540,11 @@ show(struct mon *m)
 {
 	if (m->target_oy == 0 && !m->animating && m->visible) return;
 	int was_hidden = !m->visible;
+	/* Re-probe state_cmd-bearing toggles whenever the HUD reveals after a
+	   quiet period. Catches state changes the user made through other means
+	   (e.g. picking a different relay in mullvad-menu, then hovering back). */
+	if (was_hidden && now_ms() - last_state_probe_ms > 1500)
+		probe_button_states();
 	m->visible    = 1;
 	m->target_oy  = 0;
 	m->animating  = 1;
@@ -726,6 +780,7 @@ static const struct wl_registry_listener reg_listener = {
 int
 main(void)
 {
+	probe_button_states();
 	signal(SIGCHLD, SIG_IGN);
 
 	if (!fcft_init(FCFT_LOG_COLORIZE_NEVER, false, FCFT_LOG_CLASS_ERROR))

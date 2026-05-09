@@ -52,9 +52,11 @@ static const Rule rules[] = {
 	{ "ws-hud-bt",                NULL,  0,         1,          -1 },
 	{ "ws-hud-wifi",              NULL,  0,         1,          -1 },
 	{ "ws-hud-vol",               NULL,  0,         1,          -1 },
-	{ NULL,                       "ws-hud-bt",   0, 1,          -1 },
-	{ NULL,                       "ws-hud-wifi", 0, 1,          -1 },
-	{ NULL,                       "ws-hud-vol",  0, 1,          -1 },
+	{ "ws-hud-mullvad",           NULL,  0,         1,          -1 },
+	{ NULL,                       "ws-hud-bt",      0, 1,       -1 },
+	{ NULL,                       "ws-hud-wifi",    0, 1,       -1 },
+	{ NULL,                       "ws-hud-vol",     0, 1,       -1 },
+	{ NULL,                       "ws-hud-mullvad", 0, 1,       -1 },
 };
 
 /* layout(s) */
@@ -141,6 +143,7 @@ static const Key keys[] = {
 	{ MODKEY,                     WS_KEY_POMODORO,         spawn,             SHCMD(WS_POMODORO_CMD " menu") },
 	{ MODKEY,                     WS_KEY_POWERMENU,        spawn,             SHCMD(WS_POWERMENU_CMD) },
 	{ MODKEY,                     WS_KEY_OBSIDIAN,         spawn,             SHCMD(WS_OBSIDIAN_CMD) },
+	{ MODKEY,                     WS_KEY_FILEMANAGER,      spawn,             SHCMD(WS_FILEMANAGER_CMD) },
 
 	/* window management */
 	{ MODKEY,                     XKB_KEY_q,               killclient,        {0} },

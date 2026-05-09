@@ -127,7 +127,7 @@
 #define WS_STATUS_CPU         1   /* includes CPU temperature when available */
 #define WS_STATUS_BATTERY     1
 #define WS_STATUS_VOLUME      1
-#define WS_STATUS_BRIGHTNESS  1
+#define WS_STATUS_VPN         1   /* mullvad WireGuard tunnel up/down */
 #define WS_STATUS_WIFI        1
 
 /* How often each metric is re-sampled (seconds, multiples of 1). */
@@ -151,20 +151,25 @@
 #define WS_HUD_ICON             0xffffffffu   /* nerd-font glyph colour */
 #define WS_HUD_FONT             "FiraCode Nerd Font:size=18"
 
-/* buttons — { TYPE, action, alt-action, icon }
+/* buttons — { TYPE, action, alt-action, state-cmd, icon }
  *   TYPE       0 = click (one shot), 1 = toggle (alternates action/alt-action)
  *   action     shell command run on press (or on toggle-on); NULL = no-op
  *   alt-action toggle-off command (ignored for click; NULL for click)
+ *   state-cmd  optional probe run once at ws-hud startup; if it exits 0, the
+ *              toggle starts in the ON state. Only meaningful for type=1. NULL
+ *              keeps the initial state OFF (the previous default).
  *   icon       nerd-font codepoint shown in the button (0 = blank)
  * Add or remove rows freely; widget width auto-fits the count. */
 #define WS_HUD_BUTTONS \
-	{ 1, "wlsunset -T 4001 -t 4000",       "pkill -x wlsunset",            0xf186 }, /* moon — night mode (always ~4000K while toggled; wlsunset requires T>t) */ \
-	{ 1, "makoctl mode -a do-not-disturb", "makoctl mode -r do-not-disturb", 0xf1f6 }, /* bell-slash — DND (needs the [mode=do-not-disturb] block in mako config) */ \
-	{ 1, "ws-hud-lidlock on",              "ws-hud-lidlock off",             0xf023 }, /* lock — inhibit lid-close hibernate (holds elogind handle-lid-switch lock) */ \
-	{ 1, "sudo -n mullvad-vpn up",         "sudo -n mullvad-vpn down",       0xf3ed }, /* shield — Mullvad WireGuard VPN (needs `sudo mullvad-wg-setup <ACCT>` once) */ \
-	{ 0, "foot -T ws-hud-bt   --app-id=ws-hud-bt   -e bluetuith --no-warning", NULL, 0xf293 }, /* bluetooth */ \
-	{ 0, "foot -T ws-hud-wifi --app-id=ws-hud-wifi -e impala",    NULL, 0xf1eb }, /* wifi */ \
-	{ 0, "foot -T ws-hud-vol  --app-id=ws-hud-vol  -e pulsemixer", NULL, 0xf028 }  /* volume */
+	{ 1, "wlsunset -T 4001 -t 4000",       "pkill -x wlsunset",              NULL,                          0xf186 }, /* moon — night mode (always ~4000K while toggled; wlsunset requires T>t) */ \
+	{ 1, "makoctl mode -a do-not-disturb", "makoctl mode -r do-not-disturb", NULL,                          0xf1f6 }, /* bell-slash — DND (needs the [mode=do-not-disturb] block in mako config) */ \
+	{ 1, "ws-hud-lidlock on",              "ws-hud-lidlock off",             "ws-hud-lidlock status | grep -qx on", 0xf023 }, /* lock — inhibit lid-close hibernate (holds elogind handle-lid-switch lock) */ \
+	{ 1, "foot -T ws-hud-mullvad --app-id=ws-hud-mullvad -e mullvad-menu", \
+	     "sudo -n mullvad-vpn down && notify-send -a Mullvad -i network-vpn-disabled 'Mullvad VPN' 'Disconnected' || notify-send -a Mullvad -i dialog-warning 'Mullvad VPN' 'Disconnect failed (run mullvad-wg-setup?)'", \
+	     "mullvad-vpn status >/dev/null 2>&1",  0xf132 }, /* shield — Mullvad VPN; off→opens TUI to pick a server, on→disconnect (autostart connects fastest CZ at login) */ \
+	{ 0, "foot -T ws-hud-bt   --app-id=ws-hud-bt   -e bluetuith --no-warning", NULL, NULL, 0xf293 }, /* bluetooth */ \
+	{ 0, "foot -T ws-hud-wifi --app-id=ws-hud-wifi -e impala",                 NULL, NULL, 0xf1eb }, /* wifi */ \
+	{ 0, "foot -T ws-hud-vol  --app-id=ws-hud-vol  -e pulsemixer",             NULL, NULL, 0xf028 }  /* volume */
 
 /* geometry (pixels) */
 #define WS_HUD_BTN_W            44   /* button width  */
@@ -185,18 +190,39 @@
 #define WS_HUD_ANIM_EPSILON     0.5  /* px from target where animation snaps */
 
 /* ------------------------------------------------------------
+ * GTK / icon / cursor themes
+ *
+ * The installer fetches Graphite-gtk-theme (vinceliuice) and the
+ * Bibata cursor release tarball when missing — the macros below are
+ * only the *names* baked into ~/.config/gtk-{3,4}.0/settings.ini and
+ * gsettings, NOT a generic theme switcher. Changing WS_GTK_THEME to
+ * something the installer doesn't fetch will leave you with broken
+ * fallbacks until you install that theme yourself.
+ *
+ * WS_PAPIRUS_FOLDER picks the folder accent (grey, white, teal, …);
+ * see `papirus-folders -l` for the full list.
+ * ------------------------------------------------------------ */
+#define WS_GTK_THEME       "Graphite-Dark"
+#define WS_ICON_THEME      "Papirus-Dark"
+#define WS_CURSOR_THEME    "Bibata-Modern-Ice"
+#define WS_CURSOR_SIZE     20
+#define WS_GTK_FONT        "FiraCode Nerd Font 10"
+#define WS_PAPIRUS_FOLDER  "teal"
+
+/* ------------------------------------------------------------
  * APP COMMANDS
  * ------------------------------------------------------------ */
 #define WS_TERM_CMD       "foot"
 #define WS_LAUNCHER_CMD   "dmenu-launcher"
-#define WS_BROWSER_CMD    "helium"
+#define WS_BROWSER_CMD    "librewolf"
 #define WS_EDITOR_CMD     "code"
 #define WS_LOCK_CMD       "swaylock"
 #define WS_SCREENSHOT_CMD "$HOME/.local/bin/screenshot-area"
 #define WS_OSD_CMD        "$HOME/.local/bin/dwl-osd"   /* volume/brightness/mic OSD */
 #define WS_POMODORO_CMD   "$HOME/.local/bin/ws-pomodoro" /* pomodoro timer + kew music */
 #define WS_POWERMENU_CMD  "$HOME/.local/bin/ws-powermenu" /* poweroff/reboot/hibernate/logout */
-#define WS_OBSIDIAN_CMD   "obsidian"
+#define WS_OBSIDIAN_CMD     "obsidian"
+#define WS_FILEMANAGER_CMD  "thunar"
 
 /* ------------------------------------------------------------
  * KEYBINDS
@@ -211,7 +237,7 @@
  *
  *   Win + Enter      →  terminal
  *   Win + d          →  launcher
- *   Win + s          →  browser  (helium)
+ *   Win + s          →  browser  (librewolf)
  *   Win + c          →  editor   (code)
  *   Win + l          →  lock screen
  *   Win + Shift + L  →  lock screen (alt chord)
@@ -219,6 +245,7 @@
  *   Win + p          →  pomodoro menu
  *   Win + e          →  power menu (poweroff/reboot/hibernate/logout)
  *   Win + o          →  obsidian
+ *   Win + t          →  file manager (thunar)
  * ------------------------------------------------------------ */
 #define WS_MOD            WLR_MODIFIER_LOGO
 
@@ -231,6 +258,7 @@
 #define WS_KEY_SCREENSHOT XKB_KEY_S        /* Win + Shift + S  */
 #define WS_KEY_POMODORO   XKB_KEY_p        /* Win + p          */
 #define WS_KEY_POWERMENU  XKB_KEY_e        /* Win + e          */
-#define WS_KEY_OBSIDIAN   XKB_KEY_o        /* Win + o          */
+#define WS_KEY_OBSIDIAN     XKB_KEY_o      /* Win + o          */
+#define WS_KEY_FILEMANAGER  XKB_KEY_t      /* Win + t          */
 
 #endif /* DWLARP_CONFIG_H */
