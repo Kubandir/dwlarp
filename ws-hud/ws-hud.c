@@ -91,6 +91,9 @@
 #ifndef WS_HUD_ANIM_EPSILON
 #define WS_HUD_ANIM_EPSILON     0.5
 #endif
+#ifndef WS_HUD_STARTUP_GRACE_MS
+#define WS_HUD_STARTUP_GRACE_MS 800
+#endif
 
 #define BTN_W          WS_HUD_BTN_W
 #define BTN_H          WS_HUD_BTN_H
@@ -154,6 +157,7 @@ struct mon {
 	int64_t anim_last_ms;
 	int animating;
 	struct wl_callback *frame_cb; /* compositor-paced animation tick */
+	int64_t configured_at_ms;
 	/* persistent buffers */
 	struct buf_slot slots[2];
 	struct wl_buffer *clear;
@@ -173,6 +177,7 @@ now_ms(void)
 
 static struct mon mons[MAX_MON];
 static int n_mons;
+static int startup_done;
 
 static struct wl_compositor       *compositor;
 static struct wl_shm              *shm;
@@ -556,6 +561,7 @@ ls_configure(void *data, struct zwlr_layer_surface_v1 *ls,
 	zwlr_layer_surface_v1_ack_configure(ls, serial);
 	init_mon_hidden(m);
 	m->configured = 1;
+	m->configured_at_ms = now_ms();
 }
 static void ls_closed(void *d, struct zwlr_layer_surface_v1 *ls) {}
 static const struct zwlr_layer_surface_v1_listener ls_listener = {
@@ -594,6 +600,12 @@ ptr_enter(void *d, struct wl_pointer *p, uint32_t serial,
 	cursor_kind = -1; /* force reapply on this enter's serial */
 	set_cursor((m->visible && hit(cur_x, cur_y) >= 0) ? 1 : 0);
 	m->hide_at_ms = 0;
+	/* If the pointer was already over the trigger zone when our surface
+	   first mapped, the compositor fires ptr_enter immediately — the user
+	   didn't actually hover. Ignore enters within the startup grace. */
+	if (m->configured_at_ms &&
+	    now_ms() - m->configured_at_ms < WS_HUD_STARTUP_GRACE_MS)
+		return;
 	show(m);
 }
 static void
@@ -672,10 +684,46 @@ reg_global(void *d, struct wl_registry *r, uint32_t name,
 		struct mon *m = &mons[n_mons++];
 		m->name   = name;
 		m->output = wl_registry_bind(r, name, &wl_output_interface, 3);
+		/* During initial bootstrap the main() loop sets up all known
+		   outputs; afterwards we set up hot-plugged ones here. */
+		if (startup_done)
+			setup_mon(m);
 	}
 }
+
+static void
+mon_destroy(struct mon *m)
+{
+	if (m->frame_cb) { wl_callback_destroy(m->frame_cb); m->frame_cb = NULL; }
+	if (m->ls)      { zwlr_layer_surface_v1_destroy(m->ls); m->ls = NULL; }
+	if (m->surface) { wl_surface_destroy(m->surface); m->surface = NULL; }
+	if (m->clear)   { wl_buffer_destroy(m->clear); m->clear = NULL; }
+	for (int i = 0; i < 2; i++) {
+		if (m->slots[i].wl) {
+			wl_buffer_destroy(m->slots[i].wl);
+			m->slots[i].wl = NULL;
+		}
+	}
+	if (m->shm_base) { munmap(m->shm_base, m->shm_size); m->shm_base = NULL; }
+	if (m->output)  { wl_output_destroy(m->output); m->output = NULL; }
+	if (cur_mon == m) cur_mon = NULL;
+}
+
+static void
+reg_global_remove(void *d, struct wl_registry *r, uint32_t name)
+{
+	for (int i = 0; i < n_mons; i++) {
+		if (mons[i].name == name) {
+			mon_destroy(&mons[i]);
+			mons[i] = mons[--n_mons];
+			memset(&mons[n_mons], 0, sizeof(mons[n_mons]));
+			return;
+		}
+	}
+}
+
 static const struct wl_registry_listener reg_listener = {
-	.global = reg_global, .global_remove = (void*)noop,
+	.global = reg_global, .global_remove = reg_global_remove,
 };
 
 int
@@ -714,6 +762,7 @@ main(void)
 
 	for (int i = 0; i < n_mons; i++)
 		setup_mon(&mons[i]);
+	startup_done = 1;
 
 	sigset_t mask;
 	sigemptyset(&mask);

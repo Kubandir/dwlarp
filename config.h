@@ -149,7 +149,7 @@
 #define WS_HUD_ON               0xff3a7268u   /* toggle-on fill (=WS_FOCUS) */
 #define WS_HUD_HOLD             0xff3a7268u   /* click-flash fill while held */
 #define WS_HUD_ICON             0xffffffffu   /* nerd-font glyph colour */
-#define WS_HUD_FONT             "FiraCode Nerd Font:size=22"
+#define WS_HUD_FONT             "FiraCode Nerd Font:size=18"
 
 /* buttons — { TYPE, action, alt-action, icon }
  *   TYPE       0 = click (one shot), 1 = toggle (alternates action/alt-action)
@@ -160,16 +160,18 @@
 #define WS_HUD_BUTTONS \
 	{ 1, "wlsunset -T 4001 -t 4000",       "pkill -x wlsunset",            0xf186 }, /* moon — night mode (always ~4000K while toggled; wlsunset requires T>t) */ \
 	{ 1, "makoctl mode -a do-not-disturb", "makoctl mode -r do-not-disturb", 0xf1f6 }, /* bell-slash — DND (needs the [mode=do-not-disturb] block in mako config) */ \
+	{ 1, "ws-hud-lidlock on",              "ws-hud-lidlock off",             0xf023 }, /* lock — inhibit lid-close hibernate (holds elogind handle-lid-switch lock) */ \
+	{ 1, "sudo -n mullvad-vpn up",         "sudo -n mullvad-vpn down",       0xf3ed }, /* shield — Mullvad WireGuard VPN (needs `sudo mullvad-wg-setup <ACCT>` once) */ \
 	{ 0, "foot -T ws-hud-bt   --app-id=ws-hud-bt   -e bluetuith --no-warning", NULL, 0xf293 }, /* bluetooth */ \
 	{ 0, "foot -T ws-hud-wifi --app-id=ws-hud-wifi -e impala",    NULL, 0xf1eb }, /* wifi */ \
 	{ 0, "foot -T ws-hud-vol  --app-id=ws-hud-vol  -e pulsemixer", NULL, 0xf028 }  /* volume */
 
 /* geometry (pixels) */
-#define WS_HUD_BTN_W            60   /* button width  */
-#define WS_HUD_BTN_H            60   /* button height */
-#define WS_HUD_BTN_GAP          12   /* horizontal gap between buttons */
+#define WS_HUD_BTN_W            44   /* button width  */
+#define WS_HUD_BTN_H            44   /* button height */
+#define WS_HUD_BTN_GAP          8    /* horizontal gap between buttons */
 #define WS_HUD_BTN_BORDER_PX    2    /* per-button border thickness */
-#define WS_HUD_PAD              10   /* inner padding around the button row */
+#define WS_HUD_PAD              8    /* inner padding around the button row */
 #define WS_HUD_OUTER_PX         2    /* panel outer border thickness */
 #define WS_HUD_BAR_H            28   /* dwlb bar height — top strip stays transparent */
 #define WS_HUD_BTN_OVERLAP      16   /* px buttons extend up into the bar zone */

@@ -1,0 +1,3 @@
+# Allow any user in the 'wheel' group to bring the Mullvad tunnel up/down
+# without a password — this is what the ws-hud VPN toggle calls.
+%wheel ALL=(root) NOPASSWD: /usr/local/bin/mullvad-vpn up, /usr/local/bin/mullvad-vpn down, /usr/local/bin/mullvad-vpn status

@@ -1,0 +1,85 @@
+#!/bin/sh
+# mullvad-wg-setup — one-shot bootstrap for Mullvad WireGuard.
+#
+#   sudo mullvad-wg-setup <ACCOUNT_NUMBER>
+#
+# Generates a wg keypair, registers the public key with Mullvad's legacy
+# /wg/ endpoint, stores the resulting per-device assignment, and caches the
+# current list of CZ WireGuard relays. After this, `mullvad-vpn up` works.
+#
+# State written (root-owned, 0600 where sensitive):
+#   /etc/wireguard/mullvad.key      private key
+#   /etc/wireguard/mullvad.addr     "10.x.x.x/32,fc00:bbbb::x/128"
+#   /etc/wireguard/mullvad.relays   "<hostname> <pubkey> <ipv4>" per line
+#
+# Re-running rotates the key (registers a fresh one).
+
+set -eu
+
+[ "$(id -u)" = 0 ] || { echo "must run as root" >&2; exit 1; }
+[ $# -eq 1 ] || { echo "usage: $0 <ACCOUNT_NUMBER>" >&2; exit 2; }
+ACCOUNT=$1
+case "$ACCOUNT" in
+    *[!0-9]*|"") echo "account number must be digits" >&2; exit 2 ;;
+esac
+
+command -v wg   >/dev/null || { echo "need wireguard-tools" >&2; exit 1; }
+command -v curl >/dev/null || { echo "need curl" >&2; exit 1; }
+command -v jq   >/dev/null || { echo "need jq" >&2; exit 1; }
+
+DIR=/etc/wireguard
+mkdir -p "$DIR"
+chmod 700 "$DIR"
+
+umask 077
+PRIV=$(wg genkey)
+PUB=$(printf %s "$PRIV" | wg pubkey)
+
+echo "obtaining access token…"
+TOKEN=$(curl -fsS --retry 2 --max-time 15 \
+    -H 'Content-Type: application/json' \
+    -d "{\"account_number\":\"$ACCOUNT\"}" \
+    https://api.mullvad.net/auth/v1/token \
+    | jq -r '.access_token // empty') || true
+[ -n "$TOKEN" ] || {
+    echo "auth failed (bad account number? expired? rate-limited?)" >&2
+    exit 1
+}
+
+echo "registering pubkey with Mullvad…"
+RESP=$(curl -fsS --retry 2 --max-time 15 \
+    -H "Authorization: Bearer $TOKEN" \
+    -H 'Content-Type: application/json' \
+    -d "{\"pubkey\":\"$PUB\"}" \
+    https://api.mullvad.net/accounts/v1/devices) || {
+    echo "device registration failed (device limit reached? revoke an old one)" >&2
+    exit 1
+}
+
+# v1 returns JSON: { ..., "ipv4_address": "10.x.x.x/32", "ipv6_address": "fc00:bbbb::x/128", ... }
+ADDR4=$(printf %s "$RESP" | jq -r '.ipv4_address // empty')
+ADDR6=$(printf %s "$RESP" | jq -r '.ipv6_address // empty')
+[ -n "$ADDR4" ] || { echo "unexpected API response: $RESP" >&2; exit 1; }
+ADDRS="$ADDR4${ADDR6:+,$ADDR6}"
+
+printf '%s\n' "$PRIV"  > "$DIR/mullvad.key"
+printf '%s\n' "$ADDRS" > "$DIR/mullvad.addr"
+chmod 600 "$DIR/mullvad.key" "$DIR/mullvad.addr"
+
+echo "fetching CZ relay list…"
+curl -fsS --retry 2 --max-time 15 https://api.mullvad.net/app/v1/relays \
+    | jq -r '.wireguard.relays[]
+             | select(.hostname | startswith("cz-"))
+             | "\(.hostname) \(.public_key) \(.ipv4_addr_in)"' \
+    > "$DIR/mullvad.relays"
+
+if [ ! -s "$DIR/mullvad.relays" ]; then
+    echo "no CZ relays returned by API — something is off" >&2
+    exit 1
+fi
+
+chmod 644 "$DIR/mullvad.relays"
+
+N=$(wc -l < "$DIR/mullvad.relays")
+echo "done. $N CZ relays cached. assigned: $RESP"
+echo "now: sudo mullvad-vpn up"

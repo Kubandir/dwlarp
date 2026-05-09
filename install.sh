@@ -77,6 +77,7 @@ PKGS_void="
 	adwaita-icon-theme hicolor-icon-theme gnome-themes-extra
 	xauth xorg-server-xwayland fontconfig
 	wlsunset bluetuith impala pulsemixer
+	wireguard-tools jq
 	curl unzip"
 PKGS_arch="
 	base-devel git pkgconf meson ninja
@@ -89,6 +90,7 @@ PKGS_arch="
 	adwaita-icon-theme hicolor-icon-theme gnome-themes-extra
 	xorg-xwayland fontconfig
 	wlsunset impala pulsemixer bluez-utils
+	wireguard-tools jq
 	curl unzip"
 PKGS_debian="
 	build-essential git pkg-config meson ninja-build
@@ -104,6 +106,7 @@ PKGS_debian="
 	xdg-desktop-portal xdg-desktop-portal-gtk xwayland
 	adwaita-icon-theme hicolor-icon-theme gnome-themes-extra
 	wlsunset pulsemixer bluez
+	wireguard-tools jq
 	fontconfig curl unzip ca-certificates"
 PIPEWIRE_void="pipewire wireplumber"
 PIPEWIRE_arch="pipewire pipewire-pulse wireplumber"
@@ -202,7 +205,7 @@ build_all() {
 }
 
 # ---- scripts (single source of truth, used by full install AND --rebuild) ----
-SCRIPTS="dwl-autostart dwl-wallpaper dwl-autolayout dwl-watch-outputs screenshot-area dmenu-launcher dwl-osd ws-pomodoro ws-powermenu"
+SCRIPTS="dwl-autostart dwl-wallpaper dwl-autolayout dwl-watch-outputs screenshot-area dmenu-launcher dwl-osd ws-pomodoro ws-powermenu ws-hud-lidlock"
 install_scripts() {
 	mkdir -p "$HOME/.local/bin"
 	for s in $SCRIPTS; do
@@ -214,6 +217,21 @@ install_scripts() {
 	$SUDO install -Dm755 "$SRC/scripts/dwl-session"   /usr/bin/dwl-session
 	$SUDO rm -f /usr/local/bin/dwl-session
 	$SUDO install -Dm644 "$SRC/desktop/dwl.desktop"   /usr/share/wayland-sessions/dwl.desktop
+
+	# Mullvad WireGuard helpers — root-owned on /usr/local/bin so sudoers can
+	# whitelist them by absolute path. Bootstrap with:
+	#   sudo mullvad-wg-setup <ACCOUNT_NUMBER>
+	$SUDO install -Dm755 "$SRC/scripts/mullvad-wg-setup" /usr/local/bin/mullvad-wg-setup
+	$SUDO install -Dm755 "$SRC/scripts/mullvad-vpn"      /usr/local/bin/mullvad-vpn
+	$SUDO install -Dm440 "$SRC/assets/sudoers-ws-mullvad" /etc/sudoers.d/ws-mullvad
+
+	# elogind sleep hook: unblock wifi+bluetooth on resume from hibernate.
+	# Lid-close → hibernate goes through elogind (not zzz), so /etc/zzz.d/*
+	# hooks never fire — this is the path elogind actually invokes. The hook
+	# also retries in the background to catch delayed firmware rfkill events
+	# (hp_wmi on HP laptops).
+	$SUDO install -Dm755 "$SRC/assets/elogind-rfkill-unblock" \
+		/usr/libexec/elogind/system-sleep/99-rfkill-unblock
 }
 
 # ---- config.h macro readers (for swaylock template) ----

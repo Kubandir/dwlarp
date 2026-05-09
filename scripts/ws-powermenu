@@ -5,8 +5,8 @@
 set -eu
 
 # Nerd Font glyphs via printf so they survive any editor:
-#    nf-fa-power_off  ·  nf-fa-refresh
-#    nf-fa-pause      ·  nf-fa-sign_out
+#    nf-fa-power_off  ·  nf-fa-refresh
+#    nf-fa-pause      ·  nf-fa-sign_out
 ICON_OFF=$(printf '\357\200\221')
 ICON_REB=$(printf '\357\200\241')
 ICON_HIB=$(printf '\357\212\215')

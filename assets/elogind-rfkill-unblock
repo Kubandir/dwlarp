@@ -1,0 +1,23 @@
+#!/bin/sh
+# elogind system-sleep hook — keep wifi+bluetooth unblocked across hibernate.
+#
+# Some laptops (HP via hp_wmi in particular) emit a delayed ACPI rfkill event
+# during the post-resume window that re-soft-blocks the radios after the hook
+# has already run once. We unblock immediately AND on a couple of background
+# retries so whichever event lands last, we end up unblocked.
+#
+# elogind invokes hooks as: $1 = pre|post, $2 = suspend|hibernate|hybrid-sleep
+LOG=/var/log/ws-rfkill.log
+log() { printf '%s [%s/%s] %s\n' "$(date +%FT%T)" "$1" "$2" "$3" >> "$LOG" 2>/dev/null || true; }
+
+case "$1" in
+    post)
+        log "$1" "$2" "unblock pass 1"
+        rfkill unblock wifi bluetooth 2>>"$LOG"
+        # background retries: catch delayed firmware/ACPI rfkill events.
+        ( sleep 2;  rfkill unblock wifi bluetooth; log post-retry 2s ok ) &
+        ( sleep 6;  rfkill unblock wifi bluetooth; log post-retry 6s ok ) &
+        ( sleep 15; rfkill unblock wifi bluetooth; log post-retry 15s ok ) &
+        ;;
+esac
+exit 0

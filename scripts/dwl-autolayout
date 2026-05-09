@@ -63,9 +63,7 @@ eval "$(wlr-randr | awk '
 
 repaint() {
     if [ -f "$WALL" ] && command -v dwl-wallpaper >/dev/null 2>&1; then
-        # Tiny delay so the compositor commits new positions before we
-        # query them again from inside dwl-wallpaper.
-        (sleep 0.2; dwl-wallpaper "$WALL") &
+        dwl-wallpaper "$WALL" &
     fi
 }
 
