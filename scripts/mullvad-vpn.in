@@ -1,0 +1,505 @@
+#!/bin/sh
+# mullvad-vpn — bring the Mullvad WireGuard tunnel up/down, plus health,
+# killswitch, and reconnect helpers used by ws-hud, mullvad-menu, and
+# mullvad-watchdog.
+#
+#   mullvad-vpn up [HOSTNAME]    no host → fastest relay in WS_VPN_REGION,
+#                                falling back to a Central-Europe set, then
+#                                global ranking. With host → that exact relay.
+#   mullvad-vpn down             tear down; intended-state goes to "down" so
+#                                mullvad-watchdog doesn't reconnect.
+#   mullvad-vpn reconnect        force a fresh re-rank+up even if up.
+#   mullvad-vpn status           exits 0 if interface exists, 1 otherwise
+#                                (legacy; prefer `health`).
+#   mullvad-vpn health           0=on (fresh handshake), 2=stale, 1=off.
+#                                Reads /run/mullvad.handshake (written by
+#                                mullvad-watchdog as root) so it works
+#                                without privileges.
+#   mullvad-vpn current          prints connected hostname or empty.
+#   mullvad-vpn peer             prints current peer IPv4 (or empty).
+#   mullvad-vpn list             prints the cached relay list (TSV).
+#   mullvad-vpn killswitch on    load nftables ruleset, populate peer.
+#                  off           remove nftables table (allows clear traffic).
+#                  status        prints on|off.
+#   mullvad-vpn ks-reload        rewrite peer set from current tunnel state.
+#
+# Bootstrap once with `sudo mullvad-wg-setup <ACCOUNT>`.
+
+set -eu
+
+# Config from root config.h, substituted by install.sh.
+KEEPALIVE=@WS_VPN_KEEPALIVE@
+STALE_S=@WS_VPN_STALE_S@
+KILLSWITCH_DEFAULT=@WS_VPN_KILLSWITCH@
+REGION=@WS_VPN_REGION@
+
+DIR=/etc/wireguard
+IFACE=mullvad
+CONF=$DIR/$IFACE.conf
+KEY=$DIR/$IFACE.key
+ADDR=$DIR/$IFACE.addr
+# /etc/wireguard is 0700 (private keys), so non-root callers can't read it.
+# The relay catalogue is *persistent* (survives reboot) and lives under
+# /var/lib/mullvad, world-readable so mullvad-menu (user) can read it
+# without sudo. Earlier versions kept it in /run/mullvad.relays (tmpfs) —
+# that lost the cache on every reboot, and with the killswitch on the
+# autoconnect couldn't reach api.mullvad.net to refetch, leaving the user
+# stuck in "missing relay cache" on every boot.
+STATE_DIR=/var/lib/mullvad
+RELAYS=$STATE_DIR/relays.tsv
+# Per-tunnel session state stays in /run (tmpfs) — these are inherently
+# ephemeral (cleared at boot, which is correct).
+CURRENT=/run/mullvad.current
+INTENDED=/run/mullvad.intended
+PEER_FILE=/run/mullvad.peer
+HANDSHAKE=/run/mullvad.handshake
+KS_STATE=/run/mullvad.killswitch
+LOCK=/run/mullvad.lock
+
+KS_TABLE=mullvad_ks
+KS_RULESET=/etc/nftables.d/mullvad-killswitch.nft
+
+# Fallback regions tried in order after WS_VPN_REGION before going global.
+FALLBACK_REGIONS="de at pl sk"
+
+TEST_N=5
+PING_TIMEOUT=1
+HANDSHAKE_TRIES=8     # 8×1s = 8s to first handshake before we tear down
+
+need_root() { [ "$(id -u)" = 0 ] || { echo "must run as root" >&2; exit 1; }; }
+is_up()     { ip link show "$IFACE" >/dev/null 2>&1; }
+have_nft()  { command -v nft >/dev/null 2>&1; }
+
+# Serialize destructive operations. Concurrent up/down (e.g. user double-tap
+# in the HUD vs. watchdog reconnect) used to clobber /etc/wireguard/mullvad.conf
+# and leave the tunnel in a half-state.
+acquire_lock() {
+	exec 9>"$LOCK"
+	if ! flock -n 9 2>/dev/null; then
+		# Wait up to 5s for the other instance to finish — fast operations
+		# (status, health) don't take the lock at all, so this is only
+		# concurrent up/down.
+		flock -w 5 9 || { echo "another mullvad-vpn is running" >&2; exit 1; }
+	fi
+}
+
+set_intended() { (umask 022; printf '%s\n' "$1" > "$INTENDED"); }
+get_intended() { [ -r "$INTENDED" ] && cat "$INTENDED" || echo down; }
+
+write_handshake() { (umask 022; printf '%s\n' "$1" > "$HANDSHAKE"); }
+read_handshake()  { [ -r "$HANDSHAKE" ] && cat "$HANDSHAKE" || echo 0; }
+
+write_peer() { (umask 022; printf '%s\n' "$1" > "$PEER_FILE"); }
+
+# Restore working DNS if a previous crash left /etc/resolv.conf pointing at
+# the in-tunnel resolver (10.64.0.1) — or stuck immutable from an older
+# install of this script that used `chattr +i`. Without this, every DNS
+# lookup on the next boot hangs (10.64.0.1 unreachable when iface is gone).
+sanitize_dns() {
+	is_up && return 0
+	# Always strip +i defensively — earlier versions of this script set it,
+	# and a hard reboot mid-PostUp can leave the file immutable. Harmless if
+	# the attribute isn't set or chattr is missing.
+	chattr -i /etc/resolv.conf 2>/dev/null || true
+	grep -qE '^[[:space:]]*nameserver[[:space:]]+10\.64\.0\.1' \
+		/etc/resolv.conf 2>/dev/null || return 0
+	echo "stale tunnel resolver in /etc/resolv.conf — restoring fallback" >&2
+	printf 'nameserver 1.1.1.1\nnameserver 9.9.9.9\n' > /etc/resolv.conf
+	chmod 644 /etc/resolv.conf
+}
+
+# Hostnames are constrained to mullvad's published shape (cc-city-wg-NNN). We
+# enforce this because the script is invoked via passwordless sudo, so the
+# argument must never reach the shell as anything but a relay hostname.
+valid_host() {
+	case "$1" in
+		*[!a-z0-9-]*|"") return 1 ;;
+		*-*)             return 0 ;;
+		*)               return 1 ;;
+	esac
+}
+
+# --- killswitch helpers ---------------------------------------------------
+ks_loaded() {
+	have_nft || return 1
+	nft list table inet "$KS_TABLE" >/dev/null 2>&1
+}
+
+ks_publish_state() {
+	(umask 022; printf '%s\n' "$1" > "$KS_STATE")
+}
+
+ks_load() {
+	have_nft || { echo "nft not installed — killswitch disabled" >&2; return 1; }
+	[ -r "$KS_RULESET" ] || { echo "killswitch ruleset missing: $KS_RULESET" >&2; return 1; }
+	nft -f "$KS_RULESET" && ks_publish_state on
+}
+
+ks_unload() {
+	have_nft || { ks_publish_state off; return 0; }
+	nft delete table inet "$KS_TABLE" 2>/dev/null || true
+	ks_publish_state off
+}
+
+# Replace the peer_v4 set atomically. Empty arg = flush only (no UDP/51820
+# destination allowed; fail-closed). Errors from `add element` are surfaced
+# (not silenced) because a missed add would silently black-hole the handshake
+# and the user would see "bar green, no internet" with no clue why.
+ks_set_peer() {
+	ks_loaded || return 0
+	nft flush set inet "$KS_TABLE" peer_v4 2>/dev/null || true
+	if [ -n "${1:-}" ]; then
+		nft add element inet "$KS_TABLE" peer_v4 "{ $1 }" \
+			|| { echo "killswitch: failed to add peer $1 to set" >&2; return 1; }
+	fi
+}
+
+ks_status() {
+	if ks_loaded; then ks_publish_state on; echo on
+	else                ks_publish_state off; echo off
+	fi
+}
+
+# --- relay selection ------------------------------------------------------
+ensure_relays() {
+	if [ ! -s "$RELAYS" ] \
+	   || ! awk -F'\t' 'NF<4 {exit 1}' "$RELAYS" 2>/dev/null; then
+		if ks_loaded; then
+			cat >&2 <<EOF
+relay cache missing and killswitch is on — refresh needs internet.
+Run:
+  sudo mullvad-vpn killswitch off
+  sudo mullvad-wg-setup relays
+  sudo mullvad-vpn killswitch on
+EOF
+			exit 1
+		fi
+		echo "relay cache missing or stale — refreshing" >&2
+		/usr/local/bin/mullvad-wg-setup relays >&2 \
+			|| { echo "relay refresh failed" >&2; exit 1; }
+	fi
+}
+
+# Pick TEST_N candidate relays for region `cc` (empty = all). Output is
+# "<hostname>\t<pubkey>\t<ipv4>" per line.
+#
+# Two modes: when the killswitch isn't loaded we ping-rank for fastest pick;
+# when it is, ICMPv4 to public IPs is blocked by the firewall (intentionally —
+# would otherwise be a passive-observer leak), so we skip ranking and just
+# pick TEST_N random candidates. The handshake itself is the real liveness
+# test — pinging first only buys us a few-ms latency tiebreaker.
+pick_candidates() {
+	cc=$1
+	pool=$(awk -F'\t' -v cc="$cc" '
+		$1=="" {next}
+		cc!="" && $4!=cc {next}
+		{print $1"\t"$2"\t"$3}
+	' "$RELAYS" \
+	| awk 'BEGIN{srand()} {print rand()"\t"$0}' \
+	| sort -k1,1 | cut -f2- | head -n "$TEST_N")
+
+	[ -z "$pool" ] && return 0
+
+	if ks_loaded; then
+		printf '%s\n' "$pool"
+		return 0
+	fi
+
+	# No killswitch — ping-rank the pool for a fastest-first ordering.
+	printf '%s\n' "$pool" \
+	| while IFS='	' read -r host pub ip; do
+		t=$(ping -n -q -c1 -W"$PING_TIMEOUT" "$ip" 2>/dev/null \
+		    | awk -F/ '/^rtt|^round-trip/ {print $5; exit}')
+		# Unreachable hosts get sorted to the end (latency 9999).
+		[ -z "$t" ] && t=9999
+		printf '%s\t%s\t%s\t%s\n' "$t" "$host" "$pub" "$ip"
+	done | sort -n | cut -f2-
+}
+
+lookup_host() {
+	awk -F'\t' -v h="$1" '$1==h {print $1"\t"$2"\t"$3; exit}' "$RELAYS"
+}
+
+# --- wg config + bring-up -------------------------------------------------
+write_conf() {
+	# Confine umask 077 to a subshell — wg-quick runs PostUp in this same
+	# process and a leaked tight umask would create /etc/resolv.conf 0600
+	# root:root, locking non-root users out of name resolution.
+	(umask 077; cat > "$CONF" <<EOF
+# auto-generated by mullvad-vpn
+[Interface]
+PrivateKey = $(cat "$KEY")
+Address    = $(cat "$ADDR")
+# DNS handling: write 10.64.0.1 and chattr +i so iwd/dhcpcd can't clobber it
+# mid-session. PostDown restores a deterministic public fallback so we still
+# have DNS when the tunnel is down (rather than depending on a fragile
+# pre-VPN backup that may be stale across wifi networks).
+PostUp     = chattr -i /etc/resolv.conf 2>/dev/null || true; printf 'nameserver 10.64.0.1\\n' > /etc/resolv.conf; chmod 644 /etc/resolv.conf
+PostDown   = chattr -i /etc/resolv.conf 2>/dev/null || true; printf 'nameserver 1.1.1.1\\nnameserver 9.9.9.9\\n' > /etc/resolv.conf; chmod 644 /etc/resolv.conf
+
+[Peer]
+PublicKey           = $1
+AllowedIPs          = 0.0.0.0/0, ::/0
+Endpoint            = $2:51820
+PersistentKeepalive = $KEEPALIVE
+EOF
+	)
+}
+
+# Bring up using a single relay. On success, write current/peer/handshake
+# state and return 0; on handshake failure, tear down and return non-zero so
+# the caller can try the next candidate.
+try_up() {
+	host=$1; pub=$2; ip=$3
+	write_conf "$pub" "$ip"
+
+	# Populate the killswitch peer BEFORE wg-quick so the first handshake
+	# packet isn't dropped by the firewall. ks_set_peer is a no-op if the
+	# table isn't loaded; if it's loaded but the add fails, abort — proceeding
+	# would let wg-quick up "succeed" while traffic is silently dropped.
+	if ! ks_set_peer "$ip"; then
+		echo "killswitch peer update failed — aborting bring-up" >&2
+		return 1
+	fi
+
+	wg-quick up "$IFACE" >/dev/null 2>&1 || return 1
+
+	i=0
+	hs=0
+	while [ "$i" -lt "$HANDSHAKE_TRIES" ]; do
+		i=$((i + 1))
+		ping -n -q -c1 -W1 10.64.0.1 >/dev/null 2>&1 || true
+		hs=$(wg show "$IFACE" latest-handshakes 2>/dev/null | awk '{print $2}')
+		[ -n "${hs:-}" ] && [ "$hs" -gt 0 ] 2>/dev/null && break
+		hs=0
+	done
+
+	if [ "$hs" -le 0 ] 2>/dev/null; then
+		# No handshake — peer didn't respond at all.
+		wg-quick down "$IFACE" >/dev/null 2>&1 || true
+		ks_set_peer ""
+		return 1
+	fi
+
+	# Handshake completed, but that only proves the peer responded — not that
+	# packets *flow* through it. Some Mullvad relays go into a "handshakes ok
+	# but forwarding broken" degraded state where the tunnel comes up and the
+	# user sees a green shield but every actual request hangs. Verify by
+	# pinging 10.64.0.1 (Mullvad's in-tunnel resolver, present on every
+	# relay) end-to-end. Three attempts at 1s each — first reply ends the
+	# loop, so a healthy relay costs ~50ms.
+	pp=0
+	for _ in 1 2 3; do
+		if ping -n -q -c1 -W1 10.64.0.1 >/dev/null 2>&1; then
+			pp=1; break
+		fi
+	done
+	if [ "$pp" = 0 ]; then
+		echo "handshake ok via $host but 10.64.0.1 unreachable — relay degraded, failing over" >&2
+		wg-quick down "$IFACE" >/dev/null 2>&1 || true
+		ks_set_peer ""
+		return 1
+	fi
+
+	write_peer "$ip"
+	write_handshake "$hs"
+	(umask 022; printf '%s\n' "$host" > "$CURRENT")
+	echo "connected via $host"
+	return 0
+}
+
+# Try a region's worth of candidates. Returns 0 if any candidate's handshake
+# succeeded (check is_up rather than the while loop's exit, which is opaque
+# because the loop runs in a pipeline subshell).
+try_region() {
+	cc=$1; label=$2
+	candidates=$(pick_candidates "$cc")
+	[ -n "$candidates" ] || return 1
+	printf '%s\n' "$candidates" | while IFS='	' read -r host pub ip; do
+		echo "trying $label $host" >&2
+		if try_up "$host" "$pub" "$ip"; then
+			exit 0
+		fi
+	done
+	is_up && return 0 || return 1
+}
+
+bring_up() {
+	host_arg=${1:-}
+
+	[ -r "$KEY" ] && [ -r "$ADDR" ] || {
+		echo "missing $KEY or $ADDR — run mullvad-wg-setup first" >&2; exit 1
+	}
+	sanitize_dns
+
+	# Honor WS_VPN_KILLSWITCH=1: make sure the firewall is loaded before we
+	# bring any traffic up. The ruleset starts with no peer in the set, so
+	# clear-text traffic is fully blocked except LAN/DHCP.
+	if [ "$KILLSWITCH_DEFAULT" = 1 ] && ! ks_loaded; then
+		ks_load || echo "warning: killswitch could not be enabled" >&2
+	fi
+
+	set_intended up
+
+	# Specific host → that one only.
+	if [ -n "$host_arg" ]; then
+		valid_host "$host_arg" || { echo "bad hostname: $host_arg" >&2; exit 2; }
+		ensure_relays
+		row=$(lookup_host "$host_arg")
+		[ -n "$row" ] || { echo "unknown relay: $host_arg" >&2; exit 1; }
+		is_up && wg-quick down "$IFACE" >/dev/null 2>&1 || true
+		IFS='	' read -r host pub ip <<EOF
+$row
+EOF
+		echo "connecting to $host"
+		try_up "$host" "$pub" "$ip" && exit 0
+		echo "handshake failed" >&2; exit 1
+	fi
+
+	# No host → preferred region, then central-europe fallback, then global.
+	is_up && { echo "already up"; return 0; }
+	ensure_relays
+
+	try_region "$REGION" "$REGION" && exit 0
+
+	for cc in $FALLBACK_REGIONS; do
+		[ "$cc" = "$REGION" ] && continue
+		echo "$REGION exhausted — trying $cc" >&2
+		if try_region "$cc" "$cc"; then
+			notify_user "Mullvad: connected via $cc (preferred $REGION unreachable)"
+			exit 0
+		fi
+	done
+
+	echo "EU exhausted — trying global" >&2
+	if try_region "" "global"; then
+		notify_user "Mullvad: connected via global fallback (preferred $REGION unreachable)"
+		exit 0
+	fi
+
+	is_up && exit 0
+	# At this point either no candidate handshake completed or pick_candidates
+	# returned an empty pool every time. The former means the chosen relays
+	# are dead / unreachable on UDP/51820; the latter means the relays cache
+	# is empty for these CCs. Both end with "no working relay" rather than
+	# the misleading "handshake failed".
+	echo "no working relay reachable — check wifi, peer endpoints, or refresh relay cache" >&2
+	exit 1
+}
+
+bring_down() {
+	set_intended down
+	rm -f "$CURRENT"
+	if is_up; then
+		wg-quick down "$IFACE"
+	fi
+	# Killswitch stays loaded (fail-closed). Clear the peer so the post-down
+	# firewall doesn't allow stale UDP/51820 traffic.
+	ks_set_peer ""
+	write_handshake 0
+	write_peer ""
+	# Heads-up: an explicit down with killswitch still on = no internet.
+	# Many users hit this and assume the script broke their connection. The
+	# notification is harmless if the user does want fail-closed; it just
+	# tells them how to back out for hotel-wifi style situations.
+	if ks_loaded; then
+		notify_user "Mullvad disconnected — killswitch still ON (no public internet). 'sudo mullvad-vpn killswitch off' to release."
+	fi
+}
+
+# Re-rank and reconnect even if currently up. Used by the elogind post-resume
+# hook and the user's F5 in mullvad-menu. Forces intended=up (via bring_up).
+reconnect() {
+	is_up && wg-quick down "$IFACE" >/dev/null 2>&1 || true
+	bring_up
+}
+
+# Watchdog-safe reconnect: respects an explicit `down` even if the watchdog
+# decided to act before the user's down landed. The lock around this guard
+# makes it atomic — no matter who got the lock first, the loser sees the
+# winner's intended-state write.
+watchdog_reconnect() {
+	if [ "$(get_intended)" = down ]; then
+		echo "intended=down — watchdog reconnect skipped" >&2
+		return 0
+	fi
+	is_up && wg-quick down "$IFACE" >/dev/null 2>&1 || true
+	bring_up
+}
+
+# Best-effort user notification. Sleeps a beat then calls notify-send as each
+# logged-in user with a session bus — works from sudo without a target uid.
+notify_user() {
+	msg=$1
+	command -v notify-send >/dev/null 2>&1 || return 0
+	for sock in /run/user/*/bus; do
+		[ -S "$sock" ] || continue
+		uid=$(basename "$(dirname "$sock")")
+		su -s /bin/sh -c \
+			"DBUS_SESSION_BUS_ADDRESS=unix:path=$sock notify-send -a Mullvad -i network-vpn 'Mullvad VPN' '$msg'" \
+			"$(getent passwd "$uid" | cut -d: -f1)" 2>/dev/null || true
+	done
+}
+
+# Tri-state health for ws-hud / dwlb-status. Reads /run/mullvad.handshake
+# (written by mullvad-watchdog) so unprivileged callers don't need wg show.
+# Falls back to interface existence if the handshake file is missing
+# (watchdog disabled or just-installed).
+cmd_health() {
+	hs=$(read_handshake)
+	case "$hs" in
+		''|*[!0-9]*) hs=0 ;;
+	esac
+	if [ "$hs" -gt 0 ]; then
+		now=$(date +%s)
+		age=$((now - hs))
+		if [ "$age" -le "$STALE_S" ]; then
+			echo up; exit 0
+		else
+			echo stale; exit 2
+		fi
+	fi
+	# No handshake file — degrade to existence check so the legacy path
+	# (no watchdog installed) still reports "up" when the interface is up.
+	if is_up; then echo up; exit 0; fi
+	echo down; exit 1
+}
+
+case "${1:-}" in
+	up)
+		need_root; acquire_lock; bring_up "${2:-}" ;;
+	down)
+		need_root; acquire_lock; bring_down ;;
+	reconnect)
+		need_root; acquire_lock; reconnect ;;
+	watchdog-reconnect)
+		need_root; acquire_lock; watchdog_reconnect ;;
+	status)
+		if is_up; then echo up; else echo down; exit 1; fi ;;
+	health)
+		cmd_health ;;
+	current)
+		[ -r "$CURRENT" ] && cat "$CURRENT" || true ;;
+	peer)
+		[ -r "$PEER_FILE" ] && cat "$PEER_FILE" || true ;;
+	list)
+		[ -s "$RELAYS" ] || { echo "$RELAYS missing — run mullvad-wg-setup first" >&2; exit 1; }
+		cat "$RELAYS" ;;
+	killswitch)
+		need_root
+		case "${2:-}" in
+			on)     ks_load     && echo on  || { echo "killswitch load failed" >&2; exit 1; } ;;
+			off)    ks_unload   && echo off ;;
+			status) ks_status ;;
+			*)      echo "usage: ${0##*/} killswitch on|off|status" >&2; exit 2 ;;
+		esac ;;
+	ks-reload)
+		need_root
+		ks_loaded || { echo "killswitch not loaded" >&2; exit 1; }
+		ip=$([ -r "$PEER_FILE" ] && cat "$PEER_FILE")
+		ks_set_peer "$ip"
+		echo "peer set to: ${ip:-<empty>}" ;;
+	*)
+		echo "usage: ${0##*/} up [HOST] | down | reconnect | status | health | current | peer | list | killswitch on|off|status | ks-reload" >&2
+		exit 2 ;;
+esac

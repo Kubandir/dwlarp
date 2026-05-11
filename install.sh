@@ -77,6 +77,7 @@ PKGS_void="
 	xorg-server-xwayland fontconfig
 	wlsunset bluetuith impala pulsemixer
 	wireguard-tools jq libnotify
+	nftables e2fsprogs
 	curl unzip"
 PKGS_arch="
 	base-devel git pkgconf meson ninja
@@ -91,6 +92,7 @@ PKGS_arch="
 	xorg-xwayland fontconfig
 	wlsunset impala pulsemixer bluez-utils
 	wireguard-tools jq libnotify
+	nftables e2fsprogs
 	curl unzip"
 PKGS_debian="
 	build-essential git pkg-config meson ninja-build
@@ -108,6 +110,7 @@ PKGS_debian="
 	sassc
 	wlsunset pulsemixer bluez
 	wireguard-tools jq libnotify-bin
+	nftables e2fsprogs
 	fontconfig curl unzip ca-certificates"
 PIPEWIRE_void="pipewire wireplumber"
 PIPEWIRE_arch="pipewire pipewire-pulse wireplumber"
@@ -273,6 +276,26 @@ install_if_changed() {
 	$sc install -Dm"$mode" "$src" "$dst"
 }
 
+# Sed-substitute a *.in template and install the result if it differs from
+# the existing destination. Extra args are passed through to sed (use -e).
+install_template() {
+	# usage: install_template [SUDO|""] MODE SRC.in DST [-e SEDEXPR]...
+	sc=$1 mode=$2 src=$3 dst=$4
+	shift 4
+	tmp=$(mktemp)
+	sed "$@" "$src" > "$tmp"
+	install_if_changed "$sc" "$mode" "$tmp" "$dst"
+	rm -f "$tmp"
+}
+
+# Enable a runit service by symlinking /etc/sv/NAME to /var/service/NAME.
+# No-op on non-Void distros (caller wires systemd if they want).
+sv_enable() {
+	[ "$DISTRO" = void ] || return 0
+	name=$1
+	[ -L "/var/service/$name" ] || $SUDO ln -sf "/etc/sv/$name" "/var/service/$name"
+}
+
 # Papirus-Dark folder accent. The tool is idempotent but rewrites thousands of
 # symlinks (~10s), so cache the last-applied color and short-circuit when it
 # hasn't changed. Full-install only — recoloring isn't part of the --rebuild
@@ -337,14 +360,47 @@ install_scripts() {
 	# Mullvad helpers — root-owned in /usr/local/bin so sudoers whitelists by
 	# absolute path. Bootstrap once: sudo mullvad-wg-setup <ACCOUNT_NUMBER>.
 	install_if_changed "$SUDO" 755 "$SRC/scripts/mullvad-wg-setup"  /usr/local/bin/mullvad-wg-setup
-	install_if_changed "$SUDO" 755 "$SRC/scripts/mullvad-vpn"       /usr/local/bin/mullvad-vpn
+	install_template   "$SUDO" 755 "$SRC/scripts/mullvad-vpn.in"    /usr/local/bin/mullvad-vpn \
+		-e "s|@WS_VPN_KEEPALIVE@|$(read_num WS_VPN_KEEPALIVE)|g" \
+		-e "s|@WS_VPN_STALE_S@|$(read_num WS_VPN_STALE_S)|g"     \
+		-e "s|@WS_VPN_KILLSWITCH@|$(read_num WS_VPN_KILLSWITCH)|g" \
+		-e "s|@WS_VPN_REGION@|$(read_str WS_VPN_REGION)|g"
+	install_template   "$SUDO" 755 "$SRC/scripts/mullvad-watchdog.in" /usr/local/bin/mullvad-watchdog \
+		-e "s|@WS_VPN_STALE_S@|$(read_num WS_VPN_STALE_S)|g"
 	install_if_changed "$SUDO" 440 "$SRC/assets/sudoers-ws-mullvad" /etc/sudoers.d/ws-mullvad
+	install_if_changed "$SUDO" 644 "$SRC/assets/mullvad-killswitch.nft" \
+		/etc/nftables.d/mullvad-killswitch.nft
 
-	# elogind sleep hook: re-unblock wifi+bluetooth on resume; lid-close →
-	# hibernate skips /etc/zzz.d/. Background retries catch delayed firmware
-	# rfkill events (hp_wmi).
+	# Persistent relay cache directory. /var/lib/mullvad/relays.tsv replaces
+	# the old /run/mullvad.relays (tmpfs, lost on every reboot — that lost
+	# cache was the actual cause of the "missing relay cache and killswitch
+	# is on" boot loop). Migrate any existing /run copy so the user doesn't
+	# have to re-run `mullvad-wg-setup relays` after upgrading.
+	$SUDO install -d -m 755 /var/lib/mullvad
+	if [ -s /run/mullvad.relays ] && [ ! -s /var/lib/mullvad/relays.tsv ]; then
+		$SUDO cp /run/mullvad.relays /var/lib/mullvad/relays.tsv
+		$SUDO chmod 644 /var/lib/mullvad/relays.tsv
+	fi
+
+	# Runit services for the watchdog + (optional) killswitch loader.
+	# /etc/sv/<name>/run + /etc/sv/<name>/log/run, enabled via /var/service.
+	# Non-Void distros: scripts/ruleset are installed but the service-enable
+	# step is a no-op; wire systemd units yourself if you want auto-start.
+	install_if_changed "$SUDO" 755 "$SRC/assets/sv-mullvad-watchdog/run"     /etc/sv/mullvad-watchdog/run
+	install_if_changed "$SUDO" 755 "$SRC/assets/sv-mullvad-watchdog/log/run" /etc/sv/mullvad-watchdog/log/run
+	install_if_changed "$SUDO" 755 "$SRC/assets/sv-nftables-mullvad/run"     /etc/sv/nftables-mullvad/run
+	install_if_changed "$SUDO" 755 "$SRC/assets/sv-nftables-mullvad/finish"  /etc/sv/nftables-mullvad/finish
+	install_if_changed "$SUDO" 755 "$SRC/assets/sv-nftables-mullvad/log/run" /etc/sv/nftables-mullvad/log/run
+	[ "$(read_num WS_VPN_WATCHDOG)" = 1 ]   && sv_enable mullvad-watchdog
+	[ "$(read_num WS_VPN_KILLSWITCH)" = 1 ] && sv_enable nftables-mullvad
+
+	# elogind sleep hooks: re-unblock wifi+bluetooth on resume, and force a
+	# Mullvad re-rank+up after the WireGuard handshake almost certainly died
+	# during suspend (NAT mapping gone, peer might have churned).
 	install_if_changed "$SUDO" 755 "$SRC/assets/elogind-rfkill-unblock" \
 		/usr/libexec/elogind/system-sleep/99-rfkill-unblock
+	install_if_changed "$SUDO" 755 "$SRC/assets/elogind-resume-mullvad" \
+		/usr/libexec/elogind/system-sleep/98-mullvad-resume
 }
 
 # ---- config.h macro readers (for swaylock template) ----
@@ -532,3 +588,8 @@ esac
 
 say "done — pick 'dwlarp' at the greeter (or run dwlarp from a TTY)"
 say "rebuild after editing config.h:  ./install.sh --rebuild"
+if [ "$DISTRO" = void ]; then
+	say "mullvad: bootstrap once with  sudo mullvad-wg-setup <ACCOUNT>"
+	say "mullvad: runit services (mullvad-watchdog, nftables-mullvad) start automatically within 5s"
+	say "mullvad: check killswitch  sudo mullvad-vpn killswitch status   (default ON; toggle off for captive portals)"
+fi

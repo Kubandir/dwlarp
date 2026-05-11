@@ -1,4 +1,20 @@
-# Allow any user in the 'wheel' group to control the Mullvad tunnel without a
-# password — this is what mullvad-menu (and the ws-hud VPN button) call. The
-# script validates its own hostname argument before doing anything.
-%wheel ALL=(root) NOPASSWD: /usr/local/bin/mullvad-vpn up, /usr/local/bin/mullvad-vpn up *, /usr/local/bin/mullvad-vpn down, /usr/local/bin/mullvad-vpn status
+# Allow any user in the 'wheel' group to control the Mullvad tunnel without
+# a password — these are what mullvad-menu (TUI), the ws-hud shield button,
+# and the dwl-autostart autoconnect call. The mullvad-vpn script validates
+# its own hostname argument before doing anything dangerous; `health`,
+# `current`, `peer`, `status`, and `list` don't need sudo at all but are
+# listed here for symmetry / scripting convenience.
+%wheel ALL=(root) NOPASSWD: \
+	/usr/local/bin/mullvad-vpn up, \
+	/usr/local/bin/mullvad-vpn up *, \
+	/usr/local/bin/mullvad-vpn down, \
+	/usr/local/bin/mullvad-vpn reconnect, \
+	/usr/local/bin/mullvad-vpn status, \
+	/usr/local/bin/mullvad-vpn health, \
+	/usr/local/bin/mullvad-vpn current, \
+	/usr/local/bin/mullvad-vpn peer, \
+	/usr/local/bin/mullvad-vpn list, \
+	/usr/local/bin/mullvad-vpn killswitch on, \
+	/usr/local/bin/mullvad-vpn killswitch off, \
+	/usr/local/bin/mullvad-vpn killswitch status, \
+	/usr/local/bin/mullvad-vpn ks-reload

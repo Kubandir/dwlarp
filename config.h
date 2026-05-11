@@ -36,6 +36,15 @@
 #define WS_LEFTST_FG       "#ffffff"
 #define WS_LEFTST_DATE_FG  "#cfd3da"
 
+/* VPN shield colors in the bar. The shield is the most safety-critical
+ * indicator on the bar — STALE means traffic is black-holing in a dead
+ * tunnel, OFF means the killswitch is the only thing stopping a leak.
+ * Both are loud on purpose. ON is muted teal so a working tunnel doesn't
+ * pull the eye. */
+#define WS_STATUS_VPN_ON_FG     "#7fbf9f"   /* healthy — handshake fresh */
+#define WS_STATUS_VPN_STALE_FG  "#ff5050"   /* iface up, no recent handshake */
+#define WS_STATUS_VPN_OFF_FG    "#ffaa20"   /* tunnel down — killswitch active */
+
 /* ------------------------------------------------------------
  * FONTS
  * ------------------------------------------------------------ */
@@ -136,6 +145,47 @@
 #define WS_STATUS_CADENCE_DISK  300    /* disk usage */
 
 /* ------------------------------------------------------------
+ * MULLVAD VPN
+ *
+ * The tunnel is brought up by scripts/mullvad-vpn (a wg-quick wrapper).
+ * Bootstrap once with `sudo mullvad-wg-setup <ACCOUNT>` to register a
+ * device and cache the relay catalogue. After that `mullvad-vpn up` is
+ * called automatically at login by dwl-autostart, by the post-resume
+ * elogind hook, and by mullvad-watchdog if the handshake goes stale.
+ *
+ * WS_VPN_KEEPALIVE: WireGuard PersistentKeepalive in seconds. Without
+ *   this, NAT mappings on home routers expire after 30–180s of idle and
+ *   the tunnel silently dies. Mullvad's own client uses 25.
+ *
+ * WS_VPN_STALE_S: handshake older than this (seconds) is treated as
+ *   dead. The bar shield turns red, mullvad-watchdog reconnects on the
+ *   next two consecutive checks. WireGuard rekeys every 120s while
+ *   active, so 180 is conservative.
+ *
+ * WS_VPN_KILLSWITCH: 1 enables an nftables ruleset that drops outbound
+ *   traffic that isn't (a) loopback, (b) the encrypted WG tunnel,
+ *   (c) RFC1918/link-local LAN, (d) DHCP, or (e) the WG handshake to
+ *   the *current* peer endpoint. Fails closed — when the tunnel is
+ *   down or stale, you get no internet instead of a clear-text leak.
+ *   Toggle off at runtime with `sudo mullvad-vpn killswitch off` for
+ *   captive portals on public IPs.
+ *
+ * WS_VPN_WATCHDOG: 1 enables the mullvad-watchdog runit service, which
+ *   updates /run/mullvad.handshake every 5s (read by dwlb-status for
+ *   the bar shield's STALE state) and reconnects when the tunnel dies
+ *   while intended state is "up".
+ *
+ * WS_VPN_REGION: preferred two-letter country code for relay selection.
+ *   bring_up tries this region first, then a Central-Europe fallback
+ *   set, then global ranking by ping.
+ * ------------------------------------------------------------ */
+#define WS_VPN_KEEPALIVE      25
+#define WS_VPN_STALE_S       180
+#define WS_VPN_KILLSWITCH      1
+#define WS_VPN_WATCHDOG        1
+#define WS_VPN_REGION       "cz"
+
+/* ------------------------------------------------------------
  * HUD WIDGET (ws-hud) — hover-revealed button panel that slides
  * down from the bar.  Launch with `ws-hud` (not autostarted).
  *
@@ -147,29 +197,36 @@
 #define WS_HUD_BG               0xcc000000u   /* panel background (matches WS_BAR_BG) */
 #define WS_HUD_FG               0xff1e3a3au   /* outer + per-button border (=WS_BORDER) */
 #define WS_HUD_ON               0xff3a7268u   /* toggle-on fill (=WS_FOCUS) */
-#define WS_HUD_HOLD             0xff3a7268u   /* click-flash fill while held */
+#define WS_HUD_HOLD             0xff5fa090u   /* click-flash fill while held (distinct from ON so feedback is visible while toggled on) */
+#define WS_HUD_WARN             0xffd04848u   /* toggle in warn state (e.g. VPN handshake stale) */
 #define WS_HUD_ICON             0xffffffffu   /* nerd-font glyph colour */
 #define WS_HUD_FONT             "FiraCode Nerd Font:size=18"
 
-/* buttons — { TYPE, action, alt-action, state-cmd, icon }
- *   TYPE       0 = click (one shot), 1 = toggle (alternates action/alt-action)
- *   action     shell command run on press (or on toggle-on); NULL = no-op
- *   alt-action toggle-off command (ignored for click; NULL for click)
- *   state-cmd  optional probe run once at ws-hud startup; if it exits 0, the
- *              toggle starts in the ON state. Only meaningful for type=1. NULL
- *              keeps the initial state OFF (the previous default).
- *   icon       nerd-font codepoint shown in the button (0 = blank)
+/* buttons — { TYPE, action, alt-action, warn-action, state-cmd, icon }
+ *   TYPE         0 = click (one shot), 1 = toggle (alternates action/alt-action)
+ *   action       shell command run on press (or on toggle-on); NULL = no-op
+ *   alt-action   toggle-off command (ignored for click; NULL for click)
+ *   warn-action  command run when clicked in WARN state (only meaningful for
+ *                toggles whose state-cmd can return exit-2). NULL falls back
+ *                to action. Used for the VPN shield: clicking a red (stale)
+ *                shield fires a direct `mullvad-vpn reconnect` instead of
+ *                re-opening the picker menu.
+ *   state-cmd    optional probe run on ws-hud startup AND every 5s while the
+ *                HUD is visible; exit 0 → ON, exit 2 → WARN, anything else
+ *                → OFF. Only meaningful for type=1. NULL keeps state at OFF.
+ *   icon         nerd-font codepoint shown in the button (0 = blank)
  * Add or remove rows freely; widget width auto-fits the count. */
 #define WS_HUD_BUTTONS \
-	{ 1, "wlsunset -T 4001 -t 4000",       "pkill -x wlsunset",              NULL,                          0xf186 }, /* moon — night mode (always ~4000K while toggled; wlsunset requires T>t) */ \
-	{ 1, "makoctl mode -a do-not-disturb", "makoctl mode -r do-not-disturb", NULL,                          0xf1f6 }, /* bell-slash — DND (needs the [mode=do-not-disturb] block in mako config) */ \
-	{ 1, "ws-hud-lidlock on",              "ws-hud-lidlock off",             "ws-hud-lidlock status | grep -qx on", 0xf023 }, /* lock — inhibit lid-close hibernate (holds elogind handle-lid-switch lock) */ \
+	{ 1, "wlsunset -T 4001 -t 4000",       "pkill -x wlsunset",              NULL, NULL,                          0xf186 }, /* moon — night mode (always ~4000K while toggled; wlsunset requires T>t) */ \
+	{ 1, "makoctl mode -a do-not-disturb", "makoctl mode -r do-not-disturb", NULL, NULL,                          0xf1f6 }, /* bell-slash — DND (needs the [mode=do-not-disturb] block in mako config) */ \
+	{ 1, "ws-hud-lidlock on",              "ws-hud-lidlock off",             NULL, "ws-hud-lidlock status | grep -qx on", 0xf023 }, /* lock — inhibit lid-close hibernate (holds elogind handle-lid-switch lock) */ \
 	{ 1, "foot -T ws-hud-mullvad --app-id=ws-hud-mullvad -e mullvad-menu", \
 	     "sudo -n mullvad-vpn down && notify-send -a Mullvad -i network-vpn-disabled 'Mullvad VPN' 'Disconnected' || notify-send -a Mullvad -i dialog-warning 'Mullvad VPN' 'Disconnect failed (run mullvad-wg-setup?)'", \
-	     "mullvad-vpn status >/dev/null 2>&1",  0xf132 }, /* shield — Mullvad VPN; off→opens TUI to pick a server, on→disconnect (autostart connects fastest CZ at login) */ \
-	{ 0, "foot -T ws-hud-bt   --app-id=ws-hud-bt   -e bluetuith --no-warning", NULL, NULL, 0xf293 }, /* bluetooth */ \
-	{ 0, "foot -T ws-hud-wifi --app-id=ws-hud-wifi -e impala",                 NULL, NULL, 0xf1eb }, /* wifi */ \
-	{ 0, "foot -T ws-hud-vol  --app-id=ws-hud-vol  -e pulsemixer",             NULL, NULL, 0xf028 }  /* volume */
+	     "sudo -n mullvad-vpn reconnect && notify-send -a Mullvad -i network-vpn 'Mullvad VPN' 'Reconnected' || notify-send -a Mullvad -i dialog-warning 'Mullvad VPN' 'Reconnect failed (see /run/mullvad.log)'", \
+	     "mullvad-vpn health",  0xf132 }, /* shield — Mullvad VPN; exit 0=on (green), 2=stale (red), 1=off. off→opens picker, on→disconnect, stale→direct reconnect (no menu) */ \
+	{ 0, "foot -T ws-hud-bt   --app-id=ws-hud-bt   -e bluetuith --no-warning", NULL, NULL, NULL, 0xf293 }, /* bluetooth */ \
+	{ 0, "foot -T ws-hud-wifi --app-id=ws-hud-wifi -e impala",                 NULL, NULL, NULL, 0xf1eb }, /* wifi */ \
+	{ 0, "foot -T ws-hud-vol  --app-id=ws-hud-vol  -e pulsemixer",             NULL, NULL, NULL, 0xf028 }  /* volume */
 
 /* geometry (pixels) */
 #define WS_HUD_BTN_W            44   /* button width  */

@@ -1,0 +1,150 @@
+#!/bin/sh
+# mullvad-watchdog — keep the Mullvad tunnel healthy while intended state
+# is "up". Two jobs:
+#
+#   1. Publish the kernel's latest handshake epoch to /run/mullvad.handshake
+#      every CHECK_S seconds. dwlb-status reads this for the bar shield's
+#      tri-state colouring (ON/STALE/OFF), and `mullvad-vpn health` reads it
+#      so unprivileged callers can ask "is the tunnel actually working?"
+#      without needing CAP_NET_ADMIN.
+#
+#   2. If intended state is "up" and the handshake has been stale for two
+#      consecutive checks, force a reconnect via `mullvad-vpn reconnect`
+#      (re-ranks fastest relay). Exponential-ish backoff caps retry interval
+#      at BACKOFF_MAX seconds.
+#
+# Intended state is set explicitly by user actions (`mullvad-vpn up` writes
+# "up", `mullvad-vpn down` writes "down") — so an explicit user disconnect
+# is respected; the watchdog only fights NAT/peer failures, not the user.
+#
+# Runs as root via the sv-mullvad-watchdog runit service. Logs to
+# /run/mullvad.log (50-line ring buffer) — survives until reboot, which is
+# all you need for "why did the tunnel flap last night?".
+
+set -eu
+
+STALE_S=@WS_VPN_STALE_S@
+
+CHECK_S=5            # how often we sample the handshake and write the file
+NEED_FAILS=2         # consecutive stale checks before we act
+BACKOFF_BASE=30      # first reconnect attempt after this many seconds of stale
+BACKOFF_MAX=300      # cap retry interval at 5 minutes
+LOG_MAX_LINES=50
+
+INTENDED=/run/mullvad.intended
+HANDSHAKE=/run/mullvad.handshake
+KS_STATE=/run/mullvad.killswitch
+LOG=/run/mullvad.log
+MULLVAD=/usr/local/bin/mullvad-vpn
+
+iface_up() { ip link show mullvad >/dev/null 2>&1; }
+
+read_handshake_kernel() {
+	if ! iface_up; then echo 0; return; fi
+	# `wg show mullvad latest-handshakes` prints "<pubkey>\t<epoch>" per peer.
+	# We only have one peer, so first line is enough.
+	wg show mullvad latest-handshakes 2>/dev/null \
+		| awk 'NR==1 {print $2+0; exit} END {if (NR==0) print 0}'
+}
+
+write_handshake() {
+	tmp=$HANDSHAKE.tmp
+	printf '%s\n' "$1" > "$tmp"
+	chmod 644 "$tmp"
+	mv -f "$tmp" "$HANDSHAKE"
+}
+
+# Mirror the live nftables state to /run/mullvad.killswitch so mullvad-menu
+# and dwlb-status (unprivileged) can see the killswitch state without forking
+# `nft list`. mullvad-vpn also writes this on each on/off, so the file is
+# fresh even if the watchdog is paused.
+publish_killswitch() {
+	if command -v nft >/dev/null 2>&1 \
+	   && nft list table inet mullvad_ks >/dev/null 2>&1; then
+		s=on
+	else
+		s=off
+	fi
+	tmp=$KS_STATE.tmp
+	printf '%s\n' "$s" > "$tmp"
+	chmod 644 "$tmp"
+	mv -f "$tmp" "$KS_STATE"
+}
+
+intended() {
+	[ -r "$INTENDED" ] || { echo down; return; }
+	cat "$INTENDED" 2>/dev/null || echo down
+}
+
+log_event() {
+	ts=$(date -u +%FT%TZ)
+	printf '%s %s\n' "$ts" "$*" >> "$LOG"
+	# Trim to LOG_MAX_LINES — cheap because we only trim once we're over
+	# 2× the limit, so this runs maybe once an hour even under heavy churn.
+	lines=$(wc -l < "$LOG" 2>/dev/null || echo 0)
+	if [ "$lines" -gt $((LOG_MAX_LINES * 2)) ]; then
+		tail -n "$LOG_MAX_LINES" "$LOG" > "$LOG.tmp" && mv -f "$LOG.tmp" "$LOG"
+	fi
+}
+
+fail_count=0
+last_reconnect=0
+last_logged_state=""  # avoid log spam from steady-state checks
+
+log_event "watchdog started (check=${CHECK_S}s stale=${STALE_S}s)"
+
+while sleep "$CHECK_S"; do
+	hs=$(read_handshake_kernel)
+	write_handshake "$hs"
+	publish_killswitch
+
+	if [ "$(intended)" != up ]; then
+		fail_count=0
+		[ "$last_logged_state" = down ] || { log_event "intended=down; idle"; last_logged_state=down; }
+		continue
+	fi
+
+	now=$(date +%s)
+	healthy=0
+	if [ "$hs" -gt 0 ] 2>/dev/null; then
+		age=$((now - hs))
+		[ "$age" -le "$STALE_S" ] && healthy=1
+	else
+		age=-1
+	fi
+
+	if [ "$healthy" = 1 ]; then
+		fail_count=0
+		[ "$last_logged_state" = healthy ] || { log_event "tunnel healthy (handshake ${age}s ago)"; last_logged_state=healthy; }
+		continue
+	fi
+
+	# Stale / down while intended up.
+	fail_count=$((fail_count + 1))
+	last_logged_state=stale
+	if [ "$fail_count" -lt "$NEED_FAILS" ]; then
+		log_event "stale check $fail_count/$NEED_FAILS (handshake age ${age}s)"
+		continue
+	fi
+
+	# Backoff between reconnect attempts: BACKOFF_BASE × (fail_count - NEED_FAILS + 1).
+	# fail_count keeps incrementing across attempts so successive failures stretch the interval.
+	mult=$((fail_count - NEED_FAILS + 1))
+	backoff=$((BACKOFF_BASE * mult))
+	[ "$backoff" -gt "$BACKOFF_MAX" ] && backoff=$BACKOFF_MAX
+	since_last=$((now - last_reconnect))
+	if [ "$last_reconnect" -gt 0 ] && [ "$since_last" -lt "$backoff" ]; then
+		# Still in backoff window; don't hammer.
+		continue
+	fi
+
+	log_event "reconnecting (handshake age ${age}s, fail #$fail_count, backoff ${backoff}s)"
+	last_reconnect=$now
+	if "$MULLVAD" watchdog-reconnect >>"$LOG" 2>&1; then
+		log_event "reconnect ok"
+		fail_count=0
+		last_logged_state=healthy
+	else
+		log_event "reconnect failed"
+	fi
+done

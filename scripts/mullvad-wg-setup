@@ -22,9 +22,11 @@ set -eu
 [ "$(id -u)" = 0 ] || { echo "must run as root" >&2; exit 1; }
 
 DIR=/etc/wireguard
-# Public relay catalogue — kept in /run so non-root callers (mullvad-menu) can
-# read it. /etc/wireguard is 0700 by design and we don't want to relax that.
-RELAYS=/run/mullvad.relays
+# Public relay catalogue lives in /var/lib/mullvad — persistent (survives
+# reboot, unlike /run which is tmpfs) and world-readable so mullvad-menu
+# can read it without sudo. /etc/wireguard stays 0700 (private keys only).
+STATE_DIR=/var/lib/mullvad
+RELAYS=$STATE_DIR/relays.tsv
 
 refresh_relays() {
 	for c in curl jq; do
@@ -32,6 +34,8 @@ refresh_relays() {
 	done
 	mkdir -p "$DIR"
 	chmod 700 "$DIR"
+	mkdir -p "$STATE_DIR"
+	chmod 755 "$STATE_DIR"
 	echo "fetching global relay list…"
 	# v1/relays shape:
 	#   { "locations": { "cz-prg": {country, city, ...}, … },

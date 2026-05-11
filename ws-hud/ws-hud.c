@@ -41,6 +41,9 @@
 #ifndef WS_HUD_HOLD
 #define WS_HUD_HOLD  0xff3a7268u
 #endif
+#ifndef WS_HUD_WARN
+#define WS_HUD_WARN  0xffd04848u
+#endif
 #ifndef WS_HUD_ICON
 #define WS_HUD_ICON  0xffffffffu
 #endif
@@ -116,19 +119,23 @@ enum { CLICK = 0, TOGGLE = 1 };
 
 struct button {
 	int type;
-	const char *a;
-	const char *b;
-	const char *state_cmd;  /* startup probe — sets state from exit code */
+	const char *a;          /* off→on action (also default for warn if c==NULL) */
+	const char *b;          /* on→off action (TOGGLE only; NULL for CLICK) */
+	const char *c;          /* warn→? action (TOGGLE only; NULL falls back to a).
+	                           For mullvad, this is a direct reconnect — so
+	                           clicking a red shield doesn't re-open the menu. */
+	const char *state_cmd;  /* tri-state probe; exit 0 = on, 2 = warn (e.g. VPN
+	                           handshake stale), anything else = off. */
 	uint32_t icon;
-	int state;              /* runtime; not in config */
+	int state;              /* runtime; 0=off, 1=on, 2=warn */
 };
 
 #ifndef WS_HUD_BUTTONS
 #define WS_HUD_BUTTONS \
-	{ CLICK,  NULL, NULL, NULL, 0xf015 }, \
-	{ CLICK,  NULL, NULL, NULL, 0xf001 }, \
-	{ TOGGLE, NULL, NULL, NULL, 0xf013 }, \
-	{ TOGGLE, NULL, NULL, NULL, 0xf011 }
+	{ CLICK,  NULL, NULL, NULL, NULL, 0xf015 }, \
+	{ CLICK,  NULL, NULL, NULL, NULL, 0xf001 }, \
+	{ TOGGLE, NULL, NULL, NULL, NULL, 0xf013 }, \
+	{ TOGGLE, NULL, NULL, NULL, NULL, 0xf011 }
 #endif
 
 static struct button buttons[] = { WS_HUD_BUTTONS };
@@ -247,14 +254,16 @@ run_cmd_sync(const char *cmd)
 
 static int64_t last_state_probe_ms;
 
-/* Returns 1 if any button's state changed (caller can repaint). */
+/* Returns 1 if any button's state changed (caller can repaint).
+   Exit-code mapping: 0 → on (1), 2 → warn (2), anything else → off (0). */
 static int
 probe_button_states(void)
 {
 	int changed = 0;
 	for (int i = 0; i < BTN_COUNT; i++) {
 		if (!buttons[i].state_cmd) continue;
-		int s = (run_cmd_sync(buttons[i].state_cmd) == 0);
+		int rc = run_cmd_sync(buttons[i].state_cmd);
+		int s = (rc == 0) ? 1 : (rc == 2) ? 2 : 0;
 		if (s != buttons[i].state) { buttons[i].state = s; changed = 1; }
 	}
 	last_state_probe_ms = now_ms();
@@ -401,8 +410,10 @@ render_widget(uint32_t *px, int oy)
 		int bx = btn_x(i);
 		if (held_btn == i)
 			cfill(px, w, h, bx, by, BTN_W, BTN_H, WS_HUD_HOLD);
-		else if (buttons[i].type == TOGGLE && buttons[i].state)
+		else if (buttons[i].type == TOGGLE && buttons[i].state == 1)
 			cfill(px, w, h, bx, by, BTN_W, BTN_H, WS_HUD_ON);
+		else if (buttons[i].type == TOGGLE && buttons[i].state == 2)
+			cfill(px, w, h, bx, by, BTN_W, BTN_H, WS_HUD_WARN);
 		cfill(px, w, h, bx,             by,             BTN_W, t,     WS_HUD_FG);
 		cfill(px, w, h, bx,             by + BTN_H - t, BTN_W, t,     WS_HUD_FG);
 		cfill(px, w, h, bx,             by,             t,     BTN_H, WS_HUD_FG);
@@ -497,14 +508,16 @@ attach_buf(struct mon *m, struct wl_buffer *b, int request_frame)
 }
 
 /* Pack render-relevant state into one word so we can skip identical re-renders.
-   Includes oy (the per-frame variable), held button, and toggle states. */
+   Includes oy (the per-frame variable), held button, and toggle states.
+   State is tri-valued (0/1/2) so we pack 2 bits per button — 1↔2 transitions
+   must invalidate the cache or the warn colour would never paint. */
 static uint64_t
 state_sig(int oy)
 {
 	uint64_t s = (uint32_t)(oy & 0xffffff);
 	s |= ((uint64_t)(held_btn & 0xff)) << 24;
-	for (int i = 0; i < BTN_COUNT && i < 32; i++)
-		if (buttons[i].state) s |= ((uint64_t)1) << (32 + i);
+	for (int i = 0; i < BTN_COUNT && i < 16; i++)
+		s |= ((uint64_t)(buttons[i].state & 3)) << (32 + 2 * i);
 	return s;
 }
 
@@ -601,8 +614,23 @@ press(int idx)
 {
 	struct button *b = &buttons[idx];
 	if (b->type == CLICK) { run_cmd(b->a); return; }
-	run_cmd(b->state ? b->b : b->a);
-	b->state = !b->state;
+	if (b->state == 1) {
+		/* on → off: run the alt-action, flip optimistically. */
+		run_cmd(b->b);
+		b->state = 0;
+	} else if (b->state == 2) {
+		/* warn → run the warn-action (direct recovery — e.g. for the VPN
+		   button this is `sudo -n mullvad-vpn reconnect` so a click on a
+		   red shield reconnects without re-opening the picker). Falls back
+		   to `a` if `c` is NULL. Don't flip optimistically; the next probe
+		   confirms recovery. */
+		run_cmd(b->c ? b->c : b->a);
+	} else {
+		/* off → on: run the action, flip optimistically. The next probe
+		   demotes to warn if the action didn't actually fix things. */
+		run_cmd(b->a);
+		b->state = 1;
+	}
 }
 
 /* ---------- layer surface ---------- */
@@ -844,6 +872,18 @@ main(void)
 			}
 		}
 
+		/* Re-probe state-bearing buttons every 5s while visible. Catches
+		   external state changes (e.g. mullvad-watchdog reconnecting, or
+		   the tunnel going stale) so the HUD doesn't show a lying colour
+		   if the user keeps the panel open. */
+		int any_visible = 0;
+		for (int i = 0; i < n_mons; i++) if (mons[i].visible) { any_visible = 1; break; }
+		if (any_visible) {
+			int64_t probe_left = (last_state_probe_ms + 5000) - now;
+			if (probe_left < 0) probe_left = 0;
+			if (timeout < 0 || probe_left < timeout) timeout = (int)probe_left;
+		}
+
 		if (poll(pfd, 2, timeout) < 0) { wl_display_cancel_read(dpy); break; }
 		if (pfd[1].revents & POLLIN)   { wl_display_cancel_read(dpy); break; }
 		if (pfd[0].revents & POLLIN) {
@@ -859,6 +899,10 @@ main(void)
 				mons[i].hide_at_ms = 0;
 				if (mons[i].visible) hide(&mons[i]);
 			}
+		}
+		if (any_visible && now - last_state_probe_ms >= 5000) {
+			if (probe_button_states())
+				repaint_visible();
 		}
 	}
 

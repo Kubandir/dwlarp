@@ -1,0 +1,7 @@
+#!/bin/sh
+# Remove the killswitch ruleset on sv stop. Note: `sv down` (without explicit
+# stop) does NOT call finish — only TERM-then-restart cycles. So `sv stop`
+# is the way to unload at runtime; preferred entrypoint is
+# `mullvad-vpn killswitch off`.
+command -v nft >/dev/null 2>&1 && nft delete table inet mullvad_ks 2>/dev/null
+exit 0

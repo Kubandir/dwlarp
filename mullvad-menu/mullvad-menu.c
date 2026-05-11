@@ -1,9 +1,12 @@
 /* mullvad-menu — ncurses server picker for the dwlarp Mullvad VPN button.
  *
- * Reads the relay list cached by mullvad-wg-setup at /etc/wireguard/mullvad.relays
+ * Reads the relay list cached by mullvad-wg-setup at /run/mullvad.relays
  * (TSV: hostname, pubkey, ipv4, country_code, country_name, city_code, city_name).
- * Connect/disconnect happen via `sudo -n /usr/local/bin/mullvad-vpn …`, which is
- * pre-authorised in /etc/sudoers.d/ws-mullvad. */
+ * Connect/disconnect/reconnect/killswitch toggle happen via
+ * `sudo -n /usr/local/bin/mullvad-vpn …`, which is pre-authorised in
+ * /etc/sudoers.d/ws-mullvad. Health and killswitch status are read from
+ * /run/mullvad.{handshake,killswitch} without privileges (those files are
+ * 0644 and maintained by mullvad-watchdog + mullvad-vpn itself). */
 #define _GNU_SOURCE
 #include <ctype.h>
 #include <errno.h>
@@ -15,11 +18,19 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
-#define RELAYS_FILE  "/run/mullvad.relays"
-#define CURRENT_FILE "/run/mullvad.current"
-#define MULLVAD_BIN  "/usr/local/bin/mullvad-vpn"
+#include "../config.h"
+
+/* Relay catalogue is persistent (/var/lib/mullvad/relays.tsv) so it survives
+ * reboot — earlier /run path was tmpfs, lost every boot. Session state
+ * (current host, handshake age, killswitch state) stays in /run. */
+#define RELAYS_FILE     "/var/lib/mullvad/relays.tsv"
+#define CURRENT_FILE    "/run/mullvad.current"
+#define HANDSHAKE_FILE  "/run/mullvad.handshake"
+#define KS_FILE         "/run/mullvad.killswitch"
+#define MULLVAD_BIN     "/usr/local/bin/mullvad-vpn"
 
 #define MAX_RELAYS  4096
 #define FILTER_MAX  64
@@ -136,6 +147,41 @@ load_current(void)
 	fclose(f);
 }
 
+/* Latest WireGuard handshake age in seconds, or -1 if unknown / never.
+   Source of truth is mullvad-watchdog (root) writing /run/mullvad.handshake
+   every 5s. Reading is unprivileged. */
+static long
+handshake_age(void)
+{
+	FILE *f = fopen(HANDSHAKE_FILE, "r");
+	if (!f) return -1;
+	long long hs = 0;
+	if (fscanf(f, "%lld", &hs) != 1) hs = 0;
+	fclose(f);
+	if (hs <= 0) return -1;
+	long long now = (long long)time(NULL);
+	long age = (long)(now - hs);
+	return age < 0 ? 0 : age;
+}
+
+/* Killswitch state, "on" or "off". Written by mullvad-vpn ks_load/ks_unload
+   and refreshed by mullvad-watchdog every 5s. Missing file → "off". */
+static const char *
+killswitch_status(void)
+{
+	static char buf[8];
+	buf[0] = '\0';
+	FILE *f = fopen(KS_FILE, "r");
+	if (!f) return "off";
+	if (fgets(buf, sizeof buf, f)) {
+		size_t l = strlen(buf);
+		while (l > 0 && (buf[l-1] == '\n' || buf[l-1] == '\r' || buf[l-1] == ' '))
+			buf[--l] = '\0';
+	}
+	fclose(f);
+	return buf[0] ? buf : "off";
+}
+
 static void
 rebuild_filter(void)
 {
@@ -247,6 +293,40 @@ do_disconnect(void)
 	return rc;
 }
 
+/* Force a fresh re-rank+up — used by F5 when the current relay is stale or
+   the user wants a snappier one (e.g. after moving networks). */
+static int
+do_reconnect(void)
+{
+	const char *argv[] = { "/usr/bin/sudo", "-n", MULLVAD_BIN, "reconnect", NULL };
+	int rc = run_blocking(argv);
+	load_current();
+	if (rc == 0) {
+		snprintf(status_msg, sizeof status_msg,
+		         "reconnected%s%s", current_host[0] ? " via " : "", current_host);
+		notify("Mullvad VPN", status_msg, "network-vpn");
+	} else {
+		snprintf(status_msg, sizeof status_msg, "reconnect failed (rc=%d)", rc);
+		notify("Mullvad VPN", status_msg, "network-vpn-disabled");
+	}
+	return rc;
+}
+
+/* Toggle the nftables killswitch. Stays in the menu so the user can see the
+   new state on the next redraw and react (e.g. captive portal recovery). */
+static int
+do_killswitch_toggle(void)
+{
+	const char *next = strcmp(killswitch_status(), "on") == 0 ? "off" : "on";
+	const char *argv[] = { "/usr/bin/sudo", "-n", MULLVAD_BIN, "killswitch", next, NULL };
+	int rc = run_blocking(argv);
+	if (rc == 0)
+		snprintf(status_msg, sizeof status_msg, "killswitch %s", next);
+	else
+		snprintf(status_msg, sizeof status_msg, "killswitch toggle failed (rc=%d)", rc);
+	return rc;
+}
+
 static void
 clamp_scroll(int list_height)
 {
@@ -300,12 +380,28 @@ draw(void)
 	if (setup_error) { draw_setup_help(); refresh(); return; }
 
 	attron(A_BOLD);
-	if (current_host[0])
-		mvprintw(0, 0, " mullvad — connected: %s", current_host);
-	else
+	if (current_host[0]) {
+		long age = handshake_age();
+		if (age < 0)
+			mvprintw(0, 0, " mullvad — connected: %s (no handshake yet)", current_host);
+		else if (age > WS_VPN_STALE_S)
+			mvprintw(0, 0, " mullvad — STALE: %s (last handshake %lds ago)", current_host, age);
+		else
+			mvprintw(0, 0, " mullvad — connected: %s (handshake %lds ago)", current_host, age);
+	} else {
 		mvprintw(0, 0, " mullvad — disconnected");
+	}
 	attroff(A_BOLD);
-	clrtoeol();
+	/* Killswitch state — right-aligned on the same row. */
+	{
+		const char *ks = killswitch_status();
+		char ks_buf[40];
+		snprintf(ks_buf, sizeof ks_buf, "killswitch: %s ", ks);
+		int klen = (int)strlen(ks_buf);
+		clrtoeol();
+		if (cols - klen > 30)
+			mvprintw(0, cols - klen, "%s", ks_buf);
+	}
 
 	mvprintw(1, 0, " filter: %s", q_filter);
 	addch('_');
@@ -349,7 +445,7 @@ draw(void)
 		attroff(A_DIM);
 	}
 	mvprintw(rows - 1, 0,
-		" type:filter  ↑↓:move  enter:connect (or disconnect at top)  esc:quit");
+		" type:filter  ↑↓:move  enter:connect (or disconnect at top)  F5:reconnect  F2:killswitch  esc:quit");
 	clrtoeol();
 
 	refresh();
@@ -403,6 +499,8 @@ main(void)
 		else if (c == KEY_NPAGE)      move_sel(+10);
 		else if (c == KEY_HOME)       sel = IDX_DISCONNECT;
 		else if (c == KEY_END)        sel = n_filter > 0 ? n_filter - 1 : IDX_DISCONNECT;
+		else if (c == KEY_F(2))       { do_killswitch_toggle(); /* stay open; redraw shows new state */ }
+		else if (c == KEY_F(5))       { do_reconnect(); break; }
 		else if (c == '\n' || c == KEY_ENTER || c == '\r') {
 			if (sel == IDX_DISCONNECT) {
 				do_disconnect();

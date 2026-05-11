@@ -48,8 +48,22 @@
 #define I_VOL_LO    "\xf3\xb0\x95\xbf"
 #define I_VOL_OFF   "\xf3\xb0\x9d\x9f"
 #define I_WIFI_OFF  "\xf3\xb0\xa4\xab"
-#define I_VPN_ON    "\xf3\xb0\x92\x98"   /* nf-md-shield     U+F0498 */
-#define I_VPN_OFF   "\xf3\xb0\xa6\x9e"   /* nf-md-shield_off U+F099E */
+/* VPN-state indicators using bare Unicode geometric shapes — NOT Nerd Font
+ * icons. The reason: dwlb's rendering path at dwlb.c:315 treats glyphs
+ * rasterised as PIXMAN_a8r8g8b8 (i.e. colour-emoji glyphs with embedded
+ * RGB) as pre-coloured and skips applying ^fg(). FiraCode Nerd Font's
+ * shield/lock glyphs are colour-emojis (they render with internal palettes
+ * regardless of font setup), so ^fg() can't fully recolour them. Plain
+ * U+25xx geometric shapes are guaranteed alpha-only and go through the
+ * `fill_boxes(..., cur_fg_color, ...)` branch — i.e. ^fg() actually works.
+ *
+ * Three distinct shapes so the state is also readable by shape:
+ *   ●  ON     — solid disc, "active"
+ *   ▲  STALE  — triangle, "warning"
+ *   ○  OFF    — hollow ring, "inactive" */
+#define I_VPN_ON     "\xe2\x97\x8f"   /* U+25CF BLACK CIRCLE        */
+#define I_VPN_STALE  "\xe2\x96\xb2"   /* U+25B2 BLACK UP-POINTING TRIANGLE */
+#define I_VPN_OFF    "\xe2\x97\x8b"   /* U+25CB WHITE CIRCLE        */
 
 static const char *I_WIFI[4] = {
 	"\xf3\xb0\xa4\x9f","\xf3\xb0\xa4\xa2",
@@ -65,7 +79,7 @@ static int  cached_cpu_temp = -1;      /* °C, -1 = unknown */
 static int  cached_disk    = 0;
 static int  cached_bat_pct = -1;
 static int  cached_bat_chg = 0;
-static int  cached_vpn     = 0;
+static int  cached_vpn     = 0;        /* 0=off, 1=on (fresh handshake), 2=stale */
 static const char *cached_wifi_icon = I_WIFI_OFF;
 static int  cached_vol     = -1;
 static int  cached_muted   = 0;
@@ -198,11 +212,25 @@ static void sample_bat(void) {
 	}
 }
 
-/* The mullvad WireGuard interface only exists in /sys/class/net while
- * wg-quick has the tunnel up; PostDown removes it. access(2) is a single
- * stat — cheaper than ip-link forks and matches what mullvad-vpn(1) checks. */
+/* Tri-state VPN sampler. The kernel's "is the handshake fresh?" answer
+ * lives in netlink, which needs CAP_NET_ADMIN — too heavy for a status
+ * feeder. mullvad-watchdog (root) polls every 5s and publishes the latest
+ * handshake epoch to /run/mullvad.handshake; we read that and compute
+ * staleness against WS_VPN_STALE_S. If the file is missing (watchdog
+ * disabled), degrade to the legacy existence check so the bar still works
+ * — at the cost of not noticing dead handshakes. */
 static void sample_vpn(void) {
-	cached_vpn = access("/sys/class/net/mullvad", F_OK) == 0;
+	FILE *f = fopen("/run/mullvad.handshake", "r");
+	if (!f) {
+		cached_vpn = access("/sys/class/net/mullvad", F_OK) == 0 ? 1 : 0;
+		return;
+	}
+	long long hs = 0;
+	if (fscanf(f, "%lld", &hs) != 1) hs = 0;
+	fclose(f);
+	if (hs <= 0) { cached_vpn = 0; return; }
+	long long now = (long long)time(NULL);
+	cached_vpn = (now - hs <= WS_VPN_STALE_S) ? 1 : 2;
 }
 
 static void sample_wifi(void) {
@@ -266,7 +294,17 @@ static void render(void) {
 	              : cached_vol <= 33 ? I_VOL_LO : I_VOL_HI);
 #endif
 #if WS_STATUS_VPN
-	APPEND("%s   ", cached_vpn ? I_VPN_ON : I_VPN_OFF);
+	{
+		const char *vpn_fg =
+		    cached_vpn == 1 ? WS_STATUS_VPN_ON_FG :
+		    cached_vpn == 2 ? WS_STATUS_VPN_STALE_FG :
+		                      WS_STATUS_VPN_OFF_FG;
+		const char *vpn_ic =
+		    cached_vpn == 1 ? I_VPN_ON :
+		    cached_vpn == 2 ? I_VPN_STALE :
+		                      I_VPN_OFF;
+		APPEND("^fg(%s)%s^fg(" FG ")   ", vpn_fg, vpn_ic);
+	}
 #endif
 #if WS_STATUS_WIFI
 	APPEND("%s ", cached_wifi_icon);

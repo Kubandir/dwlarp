@@ -1,0 +1,66 @@
+#!/usr/sbin/nft -f
+# Mullvad WireGuard fail-closed firewall.
+#
+# Idempotent reload: `add table` ensures the table exists (no-op if already
+# present), `delete table` clears it of any prior state, then the bare
+# `table` block redefines from scratch. Without this, a second `nft -f` of
+# this file errors out with "File exists" and the runit service flaps.
+
+add table inet mullvad_ks
+delete table inet mullvad_ks
+#
+# Loaded at boot by the nftables-mullvad runit service when WS_VPN_KILLSWITCH
+# is on. Drops outbound traffic that isn't one of:
+#   - loopback or the wg "mullvad" interface (the encrypted tunnel itself)
+#   - LAN (RFC1918 + link-local) so SSH/printers/captive-portal-detection work
+#   - DHCP (so wifi can lease an address even when the tunnel is down)
+#   - ICMP echo (so basic LAN ping works)
+#   - UDP/51820 to the *current* peer endpoint (the handshake itself)
+#
+# The current peer IPv4 is held in the `peer_v4` set. mullvad-vpn writes the
+# active endpoint into this set on each `up`, and clears it on `down`. So
+# when the tunnel is down, no UDP/51820 destination is allowed — you get no
+# internet instead of a clear-text leak.
+#
+# Captive portals on public IPs need `sudo mullvad-vpn killswitch off` first.
+
+table inet mullvad_ks {
+	# Set of currently-allowed WireGuard peer endpoints. Populated by
+	# `mullvad-vpn ks-reload` (and as a side-effect of each `up`).
+	set peer_v4 {
+		type ipv4_addr
+	}
+
+	chain output {
+		type filter hook output priority 0; policy drop;
+
+		# Always allow loopback and the encrypted tunnel itself.
+		oifname { "lo", "mullvad" } accept
+
+		# ICMPv6 unconditionally — NDP/RA are required for any IPv6 to
+		# work; there's negligible leak surface in ICMP control traffic.
+		# ICMPv4 is *not* blanket-accepted; public ping would still be a
+		# (small) info-leak when the tunnel is down. Public ICMP gets
+		# the implicit drop; LAN ICMP is covered by the RFC1918 rule
+		# below (which accepts any L4 to LAN destinations).
+		meta l4proto ipv6-icmp accept
+
+		# RFC1918 / link-local / CGNAT destinations — LAN traffic.
+		# CGNAT (100.64.0.0/10) is here because some captive-portal
+		# gateways live in that range.
+		ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10 } accept
+		ip6 daddr { fc00::/7, fe80::/10 } accept
+
+		# DHCP (v4 and v6 — needed to acquire a LAN address before the
+		# tunnel can even be attempted).
+		udp sport 68 udp dport 67 accept
+		udp sport 546 udp dport 547 accept
+
+		# WireGuard handshake to the current peer.
+		udp dport 51820 ip daddr @peer_v4 accept
+
+		# Everything else: drop (default policy). Counter helps when
+		# debugging "why is X blocked" — `nft list table inet mullvad_ks`.
+		counter
+	}
+}

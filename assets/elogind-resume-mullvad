@@ -1,0 +1,22 @@
+#!/bin/sh
+# Post-resume Mullvad reconnect. elogind invokes system-sleep hooks as
+#   $1 ∈ {pre, post}, $2 ∈ {suspend, hibernate, hybrid-sleep, suspend-then-hibernate}.
+# A long suspend almost always kills the WireGuard handshake (NAT mapping
+# gone, peer might have rebooted, the wifi association has been
+# re-established with new latency). Force a fresh re-rank rather than
+# waiting for the watchdog to notice — the watchdog adds ~10–60s lag.
+#
+# Skipped if the user explicitly disconnected before suspending — we honor
+# /run/mullvad.intended so we don't fight an explicit `down`.
+
+case "$1/$2" in
+post/*)
+	intended=down
+	[ -r /run/mullvad.intended ] && intended=$(cat /run/mullvad.intended 2>/dev/null || echo down)
+	if [ "$intended" = up ] && [ -x /usr/local/bin/mullvad-vpn ]; then
+		# Give iwd a beat to re-associate so the handshake has a route.
+		( sleep 2; /usr/local/bin/mullvad-vpn reconnect >/dev/null 2>&1 ) &
+	fi
+	;;
+esac
+exit 0

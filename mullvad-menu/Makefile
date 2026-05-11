@@ -10,7 +10,7 @@ NCURSES_LIBS   := $(shell pkg-config --libs ncursesw 2>/dev/null || \
                           pkg-config --libs ncurses 2>/dev/null || \
                           echo -lncurses)
 
-CFLAGS  += $(NCURSES_CFLAGS)
+CFLAGS  += $(NCURSES_CFLAGS) -I..
 LDLIBS  += $(NCURSES_LIBS)
 
 all: mullvad-menu
@@ -18,7 +18,7 @@ all: mullvad-menu
 mullvad-menu: mullvad-menu.o
 	$(CC) $(CFLAGS) -o $@ mullvad-menu.o $(LDLIBS)
 
-mullvad-menu.o: mullvad-menu.c
+mullvad-menu.o: mullvad-menu.c ../config.h
 	$(CC) $(CFLAGS) -c -o $@ mullvad-menu.c
 
 install: mullvad-menu

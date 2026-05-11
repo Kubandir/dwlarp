@@ -1,0 +1,18 @@
+#!/bin/sh
+# One-shot: load the killswitch ruleset, then idle so `sv` can manage state.
+# Finish hook removes the ruleset on `sv stop`.
+exec 2>&1
+if ! command -v nft >/dev/null 2>&1; then
+	echo "nftables not installed — killswitch unavailable"
+	exec sleep infinity
+fi
+if [ ! -r /etc/nftables.d/mullvad-killswitch.nft ]; then
+	echo "killswitch ruleset missing: /etc/nftables.d/mullvad-killswitch.nft"
+	exec sleep infinity
+fi
+nft -f /etc/nftables.d/mullvad-killswitch.nft || {
+	echo "nft load failed"
+	exec sleep infinity
+}
+echo "killswitch loaded"
+exec sleep infinity
