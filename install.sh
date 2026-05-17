@@ -83,7 +83,7 @@ PKGS_void="
 	libseat-devel hwids libdisplay-info-devel pulseaudio-devel
 	pango-devel cairo-devel glib-devel ncurses-devel
 	fcft-devel
-	zsh
+	zsh zsh-autosuggestions zsh-completions zsh-history-substring-search zsh-syntax-highlighting
 	elogind seatd
 	foot swaybg mako brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr ImageMagick
@@ -101,7 +101,7 @@ PKGS_arch="
 	libxcb xcb-util-wm libdrm seatd hwdata libdisplay-info libpulse
 	pango cairo glib2 ncurses
 	fcft
-	zsh
+	zsh zsh-autosuggestions zsh-completions zsh-history-substring-search zsh-syntax-highlighting
 	foot swaybg mako brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr imagemagick
 	xdg-desktop-portal xdg-desktop-portal-gtk
@@ -122,7 +122,7 @@ PKGS_debian="
 	libdisplay-info-dev hwdata libpulse-dev
 	libpango1.0-dev libcairo2-dev libglib2.0-dev libncursesw5-dev
 	libfcft-dev
-	zsh
+	zsh zsh-autosuggestions zsh-syntax-highlighting
 	foot swaybg mako-notifier brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr imagemagick
 	xdg-desktop-portal xdg-desktop-portal-gtk xwayland
@@ -641,12 +641,25 @@ set_default_shell() {
 	fi
 }
 
-# Append a tty1 → dwlarp autostart block to ~/.zprofile (idempotent via
+# Append a tty1 → dwlarp autostart block to the login profile (idempotent via
 # marker comment). Used when WS_INSTALL_LY=0: without a greeter, the user
-# needs *something* to bring up the session at login. ~/.zprofile is the
-# right hook because set_default_shell just made zsh the login shell.
+# needs *something* to bring up the session at login.
+#
+# Path selection: set_default_shell just made zsh the login shell, and on Void
+# /etc/zsh/zshenv exports ZDOTDIR=$HOME/.config/zsh — so zsh reads
+# $ZDOTDIR/.zprofile, NOT $HOME/.zprofile. We source the system zshenv to
+# resolve the actual ZDOTDIR for this user; falling back to $HOME for non-zsh
+# or unset cases.
 ensure_tty1_autostart() {
 	profile="$HOME/.zprofile"
+	if command -v zsh >/dev/null 2>&1; then
+		zdotdir=$(
+			ZDOTDIR=$HOME
+			[ -r /etc/zsh/zshenv ] && . /etc/zsh/zshenv 2>/dev/null
+			printf %s "$ZDOTDIR"
+		)
+		[ -n "$zdotdir" ] && [ -d "$zdotdir" ] && profile="$zdotdir/.zprofile"
+	fi
 	marker="# dwlarp: tty1 → dwlarp autostart"
 	if [ -f "$profile" ] && grep -qF "$marker" "$profile"; then
 		return 0
@@ -655,13 +668,16 @@ ensure_tty1_autostart() {
 	cat >> "$profile" <<EOF
 
 $marker
-if [ -z "\$WAYLAND_DISPLAY" ] && [ "\$(tty)" = /dev/tty1 ]; then
+if [ -z "\$WAYLAND_DISPLAY" ] && [ "\$(tty)" = /dev/tty1 ] && command -v dwlarp >/dev/null 2>&1; then
 	# Run dwlarp as a child (not exec'd into the login shell) so that
 	# when it exits the shell can unwind normally and PAM closes the
 	# session. With \`exec\` the login chain has no parent left to call
 	# pam_close_session, elogind never garbage-collects the session,
 	# and the next login spits "failed to add session N to hash map:
 	# file exists" before falling through to a new ID.
+	# The \`command -v dwlarp\` guard keeps this block safe to live in a
+	# dotfile-synced \$ZDOTDIR/.zprofile shared across hosts that don't
+	# all have dwlarp installed.
 	dwlarp
 	exit
 fi
