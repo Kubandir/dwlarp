@@ -84,7 +84,7 @@ PKGS_void="
 	pango-devel cairo-devel glib-devel ncurses-devel
 	fcft-devel
 	zsh
-	elogind
+	elogind seatd
 	foot swaybg mako brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr ImageMagick
 	xdg-desktop-portal xdg-desktop-portal-gtk
@@ -583,9 +583,19 @@ ensure_session_manager() {
 	have elogind || have loginctl || { warn "elogind missing — XDG_RUNTIME_DIR won't be set at login"; return 0; }
 	sv_enable elogind
 	sv_enable dbus
+	# seatd as the libseat fallback. libseat tries logind→seatd→builtin;
+	# without seatd running, dwl bails with "could not connect to socket
+	# /run/seatd.sock" when the elogind session is briefly not "active"
+	# at compositor start (race during TTY autostart).
+	sv_enable seatd
+	# Membership in _seatd is required to open /run/seatd.sock (mode 0660).
+	if getent group _seatd >/dev/null 2>&1 \
+	   && ! id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx _seatd; then
+		say "adding $USER to _seatd group (re-login required)"
+		$SUDO usermod -aG _seatd "$USER"
+	fi
 	if [ -f /etc/pam.d/system-login ] && ! grep -q pam_elogind /etc/pam.d/system-login; then
 		say "wiring pam_elogind into /etc/pam.d/system-login"
-		# Leading dash = optional load; matches the void-recommended line.
 		echo '-session   optional   pam_elogind.so' | $SUDO tee -a /etc/pam.d/system-login >/dev/null
 	fi
 }
