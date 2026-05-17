@@ -83,6 +83,7 @@ PKGS_void="
 	libseat-devel hwids libdisplay-info-devel pulseaudio-devel
 	pango-devel cairo-devel glib-devel ncurses-devel
 	fcft-devel
+	zsh
 	elogind
 	foot swaybg mako brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr ImageMagick
@@ -100,6 +101,7 @@ PKGS_arch="
 	libxcb xcb-util-wm libdrm seatd hwdata libdisplay-info libpulse
 	pango cairo glib2 ncurses
 	fcft
+	zsh
 	foot swaybg mako brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr imagemagick
 	xdg-desktop-portal xdg-desktop-portal-gtk
@@ -120,6 +122,7 @@ PKGS_debian="
 	libdisplay-info-dev hwdata libpulse-dev
 	libpango1.0-dev libcairo2-dev libglib2.0-dev libncursesw5-dev
 	libfcft-dev
+	zsh
 	foot swaybg mako-notifier brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr imagemagick
 	xdg-desktop-portal xdg-desktop-portal-gtk xwayland
@@ -570,6 +573,39 @@ ly_build_from_source() {
 	) || { warn "ly: build failed (zig version mismatch?)"; return 1; }
 }
 
+set_default_shell() {
+	have zsh || { warn "zsh missing — skipping default-shell change"; return 0; }
+	zsh_path=$(command -v zsh)
+	current=$(getent passwd "$USER" 2>/dev/null | cut -d: -f7)
+	[ "$current" = "$zsh_path" ] && return 0
+	say "setting login shell to $zsh_path for $USER (current: $current)"
+	if $SUDO chsh -s "$zsh_path" "$USER" 2>/dev/null; then
+		printf '    log out and back in for it to take effect\n'
+	else
+		warn "chsh failed — run manually: chsh -s $zsh_path"
+	fi
+}
+
+# Append a tty1 → dwlarp autostart block to ~/.zprofile (idempotent via
+# marker comment). Used when WS_INSTALL_LY=0: without a greeter, the user
+# needs *something* to bring up the session at login. ~/.zprofile is the
+# right hook because set_default_shell just made zsh the login shell.
+ensure_tty1_autostart() {
+	profile="$HOME/.zprofile"
+	marker="# dwlarp: tty1 → dwlarp autostart"
+	if [ -f "$profile" ] && grep -qF "$marker" "$profile"; then
+		return 0
+	fi
+	say "adding tty1 dwlarp autostart to $profile"
+	cat >> "$profile" <<EOF
+
+$marker
+if [ -z "\$WAYLAND_DISPLAY" ] && [ "\$(tty)" = /dev/tty1 ]; then
+	exec dwlarp
+fi
+EOF
+}
+
 install_ly() {
 	have ly && { say "ly already installed"; ly_enable; return; }
 	case "$DISTRO" in
@@ -603,7 +639,15 @@ say "ensuring GTK/icon/cursor themes"; ensure_themes; apply_papirus_color
 install_wayfreeze
 say "seeding configs and scripts"; seed_configs; install_scripts
 say "installing fonts"; install_fonts
-say "installing ly greeter"; install_ly || warn "ly install failed — log in via TTY and run \`dwlarp\` (or add an exec dwlarp to ~/.zprofile)"
+if [ "$(read_num WS_INSTALL_LY)" = 0 ]; then
+	say "ly: skipped (WS_INSTALL_LY=0). Falling back to tty1 autostart."
+	ensure_tty1_autostart
+else
+	say "installing ly greeter"
+	install_ly || { warn "ly install failed — falling back to tty1 autostart"; ensure_tty1_autostart; }
+fi
+
+set_default_shell
 
 case ":${PATH}:" in *":$HOME/.local/bin:"*) ;;
 	*) warn "$HOME/.local/bin not in PATH — add it to your shell rc" ;;

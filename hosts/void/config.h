@@ -15,6 +15,11 @@
  * decide what renders in the bar regardless of this. */
 #define WS_FORM_FACTOR     "laptop"
 
+/* Install ly greeter? 1 = yes (default), 0 = skip (install.sh will then
+ * append a tty1→dwlarp autostart to ~/.zprofile). Skip on hosts where
+ * Void's zig is too old for upstream ly's build.zig.zon. */
+#define WS_INSTALL_LY      1
+
 /* ------------------------------------------------------------
  * COLORS  (0xRRGGBBAA — alpha for transparency where supported)
  * ------------------------------------------------------------ */
