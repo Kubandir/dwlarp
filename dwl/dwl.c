@@ -3187,7 +3187,14 @@ spawn(const Arg *arg)
 		dup2(STDERR_FILENO, STDOUT_FILENO);
 		setsid();
 		execvp(((char **)arg->v)[0], (char **)arg->v);
-		die("dwl: execvp %s failed:", ((char **)arg->v)[0]);
+		/* _exit, not exit/die: atexit handlers registered in the
+		 * parent (Nvidia libGL/Vulkan, EGL, ICDs) touch state
+		 * shared with the compositor via inherited fds. Running
+		 * them in a failed-exec child corrupts the parent renderer
+		 * and the whole compositor freezes/crashes — observed on
+		 * RTX 3080 when a keybind spawns a missing binary. */
+		fprintf(stderr, "dwl: execvp %s failed\n", ((char **)arg->v)[0]);
+		_exit(127);
 	}
 }
 
