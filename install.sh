@@ -656,7 +656,14 @@ ensure_tty1_autostart() {
 
 $marker
 if [ -z "\$WAYLAND_DISPLAY" ] && [ "\$(tty)" = /dev/tty1 ]; then
-	exec dwlarp
+	# Run dwlarp as a child (not exec'd into the login shell) so that
+	# when it exits the shell can unwind normally and PAM closes the
+	# session. With \`exec\` the login chain has no parent left to call
+	# pam_close_session, elogind never garbage-collects the session,
+	# and the next login spits "failed to add session N to hash map:
+	# file exists" before falling through to a new ID.
+	dwlarp
+	exit
 fi
 EOF
 }
