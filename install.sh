@@ -82,6 +82,7 @@ PKGS_void="
 	pixman-devel libxcb-devel xcb-util-wm-devel libdrm-devel
 	libseat-devel hwids libdisplay-info-devel pulseaudio-devel
 	pango-devel cairo-devel glib-devel ncurses-devel
+	fcft-devel
 	elogind
 	foot swaybg mako brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr ImageMagick
@@ -98,6 +99,7 @@ PKGS_arch="
 	wayland wayland-protocols libxkbcommon libinput pixman
 	libxcb xcb-util-wm libdrm seatd hwdata libdisplay-info libpulse
 	pango cairo glib2 ncurses
+	fcft
 	foot swaybg mako brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr imagemagick
 	xdg-desktop-portal xdg-desktop-portal-gtk
@@ -117,6 +119,7 @@ PKGS_debian="
 	libdrm-dev libseat-dev libudev-dev libgbm-dev libegl1-mesa-dev libgles2-mesa-dev
 	libdisplay-info-dev hwdata libpulse-dev
 	libpango1.0-dev libcairo2-dev libglib2.0-dev libncursesw5-dev
+	libfcft-dev
 	foot swaybg mako-notifier brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr imagemagick
 	xdg-desktop-portal xdg-desktop-portal-gtk xwayland
