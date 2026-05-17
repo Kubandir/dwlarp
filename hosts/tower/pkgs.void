@@ -29,3 +29,6 @@ MangoHud-32bit
 
 # Vulkan loader 32-bit so 32-bit games can find the Nvidia ICD.
 vulkan-loader-32bit
+
+# Browser — WS_BROWSER_CMD on this host is librewolf.
+librewolf

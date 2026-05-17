@@ -7,3 +7,6 @@
 #
 # tlp
 # iwlwifi-firmware    # (already pulled in by linux-firmware-intel/network)
+
+# Browser — WS_BROWSER_CMD on this host is librewolf.
+librewolf
