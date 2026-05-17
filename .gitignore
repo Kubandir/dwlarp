@@ -1,3 +1,6 @@
+# Generated at install time from hosts/$HOST/config.h
+/config.h
+
 # Build artifacts
 *.o
 *-protocol.c

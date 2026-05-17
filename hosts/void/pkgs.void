@@ -1,0 +1,9 @@
+# Per-host extra Void packages for the laptop. Appended to PKGS_void
+# in install.sh. One package per line; # comments and blank lines OK.
+#
+# TLP is installed manually outside dwlarp (the perf-fixes script
+# touches /etc/tlp.d/ but doesn't own the package). Add it here if
+# you want install.sh to pull it on fresh setups.
+#
+# tlp
+# iwlwifi-firmware    # (already pulled in by linux-firmware-intel/network)

@@ -46,6 +46,11 @@ fi
 
 command -v mako >/dev/null 2>&1 && _restart mako mako
 
+# Night mode schedule: warm the screen from 20:00 to 07:00. wlsunset
+# manages the gamma ramp continuously; ws-hud's moon toggle overrides
+# this with a flatter, more intense temperature when pressed.
+command -v wlsunset >/dev/null 2>&1 && _restart wlsunset wlsunset -S 07:00 -s 20:00 -t 2800 -T 6500
+
 # Mullvad VPN — connect by default at login. Block up to 10s for the wifi
 # layer (iwd) to acquire a default route before attempting the handshake —
 # the previous unconditional `up` raced iwd association on cold boot and

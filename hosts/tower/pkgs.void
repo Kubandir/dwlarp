@@ -1,0 +1,30 @@
+# Per-host extra Void packages for the tower (RTX 3080, gaming desktop).
+# Appended to PKGS_void in install.sh. One package per line.
+#
+# IMPORTANT: nvidia driver lives in the nonfree repo. Enable it manually
+# before running install.sh on a fresh Void install:
+#     sudo xbps-install -Sy void-repo-nonfree
+#     sudo xbps-install -Sy
+# Then re-run dwlarp's install.sh.
+
+# Nvidia proprietary driver. nvidia-dkms rebuilds the module on kernel
+# updates so you don't get a black screen after `xbps-install linux-X.Y`.
+nvidia
+nvidia-dkms
+nvidia-libs-32bit
+
+# Hardware video decode in browsers/players via VA-API on Nvidia.
+# Tower's 3080 has NVDEC for H.264/HEVC/AV1/VP9.
+nvidia-vaapi-driver
+
+# Steam (32-bit by nature; nonfree). Pulls a long 32-bit chain.
+steam
+
+# Gaming perf tooling. Same set the perf-fixes script installs on void.
+gamemode
+libgamemode-32bit
+MangoHud
+MangoHud-32bit
+
+# Vulkan loader 32-bit so 32-bit games can find the Nvidia ICD.
+vulkan-loader-32bit

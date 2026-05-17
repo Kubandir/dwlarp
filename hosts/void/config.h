@@ -9,6 +9,12 @@
 #ifndef DWLARP_CONFIG_H
 #define DWLARP_CONFIG_H
 
+/* Per-host knob read by install.sh to gate laptop-only installation:
+ * mullvad scripts/services, elogind resume hooks, lid-lock helper.
+ * Display-side knobs (WS_STATUS_BATTERY, WS_STATUS_WIFI, etc.) still
+ * decide what renders in the bar regardless of this. */
+#define WS_FORM_FACTOR     "laptop"
+
 /* ------------------------------------------------------------
  * COLORS  (0xRRGGBBAA — alpha for transparency where supported)
  * ------------------------------------------------------------ */
@@ -217,7 +223,7 @@
  *   icon         nerd-font codepoint shown in the button (0 = blank)
  * Add or remove rows freely; widget width auto-fits the count. */
 #define WS_HUD_BUTTONS \
-	{ 1, "wlsunset -T 4001 -t 4000",       "pkill -x wlsunset",              NULL, NULL,                          0xf186 }, /* moon — night mode (always ~4000K while toggled; wlsunset requires T>t) */ \
+	{ 1, "pkill -x wlsunset; wlsunset -T 2801 -t 2800",  "pkill -x wlsunset",              NULL, "pgrep -x wlsunset >/dev/null", 0xf186 }, /* moon — night mode override (~2800K while toggled; wlsunset requires T>t). Autostart already schedules wlsunset 20:00→07:00; this kills the scheduled instance and forces a more intense flat temp. */ \
 	{ 1, "makoctl mode -a do-not-disturb", "makoctl mode -r do-not-disturb", NULL, NULL,                          0xf1f6 }, /* bell-slash — DND (needs the [mode=do-not-disturb] block in mako config) */ \
 	{ 1, "ws-hud-lidlock on",              "ws-hud-lidlock off",             NULL, "ws-hud-lidlock status | grep -qx on", 0xf023 }, /* lock — inhibit lid-close hibernate (holds elogind handle-lid-switch lock) */ \
 	{ 1, "foot -T ws-hud-mullvad --app-id=ws-hud-mullvad -e mullvad-menu", \

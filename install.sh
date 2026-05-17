@@ -48,6 +48,20 @@ else
 	git clone --depth=1 https://github.com/Kubandir/dwlarp.git "$SRC"
 fi
 
+# ---- host selection ----
+# Per-host config.h lives in hosts/<host>/. The repo-root config.h is
+# regenerated from there on every install so the suckless single-header
+# build model is preserved. Override the auto-pick with DWLARP_HOST=name.
+HOST=${DWLARP_HOST:-$(uname -n 2>/dev/null | cut -d. -f1)}
+HOST=${HOST:-void}
+if [ ! -f "$SRC/hosts/$HOST/config.h" ]; then
+	warn "hosts/$HOST/config.h missing — falling back to hosts/void"
+	HOST=void
+fi
+[ -f "$SRC/hosts/$HOST/config.h" ] || die "no host config found (not even hosts/void/config.h)"
+say "host = $HOST"
+cp "$SRC/hosts/$HOST/config.h" "$SRC/config.h"
+
 # ---- distro detection ----
 . /etc/os-release
 case "${ID:-}${ID_LIKE:-}" in
@@ -119,6 +133,12 @@ PIPEWIRE_debian="pipewire pipewire-pulse wireplumber"
 install_deps() {
 	eval "pkgs=\$PKGS_$DISTRO"
 	have_pipewire || eval "pkgs=\"\$pkgs \$PIPEWIRE_$DISTRO\""
+	# Append per-host extras (hosts/<host>/pkgs.<distro>), if present.
+	host_pkgs_file="$SRC/hosts/$HOST/pkgs.$DISTRO"
+	if [ -f "$host_pkgs_file" ]; then
+		host_pkgs=$(grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$host_pkgs_file" | tr '\n' ' ')
+		[ -n "$host_pkgs" ] && pkgs="$pkgs $host_pkgs"
+	fi
 	case "$DISTRO" in
 		void)
 			$SUDO xbps-install -Sy >/dev/null || warn "repo sync failed"
