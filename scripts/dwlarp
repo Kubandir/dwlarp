@@ -10,6 +10,12 @@
 # Source cursor theme/size HERE (before dwl spawns) — wlroots reads
 # XCURSOR_THEME at compositor startup to pick the root cursor, and dwl-autostart
 # is a child of dwl so it can't influence dwl's own env.
+# dwlarp installs scripts (dmenu-launcher, ws-hud, ws-powermenu, …) to
+# ~/.local/bin; dwl's spawn() uses execvp so anything bound via WS_*_CMD
+# needs to be on PATH at compositor start. Prepend it here so the user
+# doesn't need /etc/profile.d/xdg.sh or per-shell rc to find them.
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$HOME/.local/bin:$PATH"; export PATH ;; esac
+
 [ -r "${XDG_CONFIG_HOME:-$HOME/.config}/dwlarp/env" ] \
 	&& . "${XDG_CONFIG_HOME:-$HOME/.config}/dwlarp/env"
 
