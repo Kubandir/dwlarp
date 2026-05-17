@@ -20,6 +20,12 @@
  * Void's zig is too old for upstream ly's build.zig.zon. */
 #define WS_INSTALL_LY      1
 
+/* GPU vendor — installer reads this to wire renderer + VA-API + cursor env
+ * into ~/.config/dwlarp/env. "intel" leaves wlroots on its default (gles2 +
+ * HW cursors, fine on Intel/AMD). "nvidia" picks the vulkan renderer + SW
+ * cursor + nvidia-vaapi-driver. */
+#define WS_GPU             "intel"
+
 /* ------------------------------------------------------------
  * COLORS  (0xRRGGBBAA — alpha for transparency where supported)
  * ------------------------------------------------------------ */

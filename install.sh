@@ -487,6 +487,22 @@ seed_configs() {
 	    -e "s|@WS_CURSOR_SIZE@|$cursor_size|g"   \
 	    "$SRC/assets/dwlarp.env.in" > "$cfg/dwlarp/env"
 
+	# GPU-specific env. WS_GPU=nvidia → wlroots needs the vulkan renderer
+	# (gles2 has black-screen + cursor-disappear bugs on the proprietary
+	# driver) and SW cursors; VA-API/GBM/GLX are pointed at the proprietary
+	# stack so browsers/players pick the right ICD.
+	case "$(read_str WS_GPU)" in
+		nvidia) cat >> "$cfg/dwlarp/env" <<'EOF'
+
+export WLR_RENDERER=vulkan
+export WLR_NO_HARDWARE_CURSORS=1
+export LIBVA_DRIVER_NAME=nvidia
+export GBM_BACKEND=nvidia-drm
+export __GLX_VENDOR_LIBRARY_NAME=nvidia
+EOF
+			;;
+	esac
+
 	# gsettings — xdg-desktop-portal-gtk reads these to advertise the theme
 	# to portal-aware clients (librewolf chrome, electron, …). Failures
 	# (no dbus, no schema) are non-fatal — settings.ini still applies.
