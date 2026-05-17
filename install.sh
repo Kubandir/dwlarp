@@ -603,7 +603,7 @@ say "ensuring GTK/icon/cursor themes"; ensure_themes; apply_papirus_color
 install_wayfreeze
 say "seeding configs and scripts"; seed_configs; install_scripts
 say "installing fonts"; install_fonts
-say "installing ly greeter"; install_ly
+say "installing ly greeter"; install_ly || warn "ly install failed — log in via TTY and run \`dwlarp\` (or add an exec dwlarp to ~/.zprofile)"
 
 case ":${PATH}:" in *":$HOME/.local/bin:"*) ;;
 	*) warn "$HOME/.local/bin not in PATH — add it to your shell rc" ;;

@@ -1,9 +1,10 @@
 # Per-host extra Void packages for the tower (RTX 3080, gaming desktop).
 # Appended to PKGS_void in install.sh. One package per line.
 #
-# IMPORTANT: nvidia driver lives in the nonfree repo. Enable it manually
-# before running install.sh on a fresh Void install:
-#     sudo xbps-install -Sy void-repo-nonfree
+# IMPORTANT: enable nonfree + multilib repos BEFORE running install.sh
+# on a fresh Void install — nvidia + Steam + the 32-bit packages below
+# live in these repos and will be skipped otherwise.
+#     sudo xbps-install -Sy void-repo-nonfree void-repo-multilib void-repo-multilib-nonfree
 #     sudo xbps-install -Sy
 # Then re-run dwlarp's install.sh.
 
