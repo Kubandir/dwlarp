@@ -84,6 +84,18 @@
 #define WS_GAP_PX          6       /* gap between tiled windows (pixels) */
 #define WS_MFACT           0.55f   /* default master/stack split [0.05..0.95] */
 
+/* Monitor mode override. WS_MONITOR_NAME is a substring matched against
+ * wlroots output names (e.g. "DP-1", "HDMI-A-1"); NULL matches every
+ * output. WS_MONITOR_REFRESH_MHZ=0 keeps wlroots' preferred mode, which
+ * is what most monitors want. Set all three to pin a non-preferred mode:
+ * the LG ultrawide here advertises 60Hz as preferred but supports 120Hz
+ * at native res, and wlroots-on-Nvidia has no working wlr-output-management
+ * to pick it at runtime, so the only way to get 120Hz is to compile it in. */
+#define WS_MONITOR_NAME        "DP-1"
+#define WS_MONITOR_WIDTH       3440
+#define WS_MONITOR_HEIGHT      1440
+#define WS_MONITOR_REFRESH_MHZ 120000
+
 /* ------------------------------------------------------------
  * KEYBOARD
  *

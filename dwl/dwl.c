@@ -229,6 +229,10 @@ typedef struct {
 	const Layout *lt;
 	enum wl_output_transform rr;
 	int x, y;
+	/* Optional explicit mode. refresh_mhz=0 → keep wlroots' preferred
+	 * mode. Set width/height/refresh_mhz to force a specific mode
+	 * (refresh expressed in millihertz, e.g. 120000 for 120Hz). */
+	int width, height, refresh_mhz;
 } MonitorRule;
 
 typedef struct {
@@ -1157,11 +1161,12 @@ createmon(struct wl_listener *listener, void *data)
 		}
 	}
 
-	/* The mode is a tuple of (width, height, refresh rate), and each
-	 * monitor supports only a specific set of modes. We just pick the
-	 * monitor's preferred mode; a more sophisticated compositor would let
-	 * the user configure it. */
-	wlr_output_state_set_mode(&state, wlr_output_preferred_mode(wlr_output));
+	/* Pick a mode. If the matched rule pinned width/height/refresh, use
+	 * that; otherwise fall back to wlroots' preferred mode. */
+	if (r < END(monrules) && r->refresh_mhz > 0)
+		wlr_output_state_set_custom_mode(&state, r->width, r->height, r->refresh_mhz);
+	else
+		wlr_output_state_set_mode(&state, wlr_output_preferred_mode(wlr_output));
 
 	/* Set up event listeners */
 	LISTEN(&wlr_output->events.frame, &m->frame, rendermon);

@@ -82,6 +82,15 @@
 #define WS_GAP_PX          6       /* gap between tiled windows (pixels) */
 #define WS_MFACT           0.55f   /* default master/stack split [0.05..0.95] */
 
+/* Monitor mode override. WS_MONITOR_NAME is a substring matched against
+ * wlroots output names; NULL matches every output. WS_MONITOR_REFRESH_MHZ=0
+ * keeps wlroots' preferred mode (what we want on the laptop). See the
+ * tower config for the non-zero case. */
+#define WS_MONITOR_NAME        NULL
+#define WS_MONITOR_WIDTH       0
+#define WS_MONITOR_HEIGHT      0
+#define WS_MONITOR_REFRESH_MHZ 0
+
 /* ------------------------------------------------------------
  * KEYBOARD
  *

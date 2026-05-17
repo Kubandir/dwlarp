@@ -67,9 +67,11 @@ static const Layout layouts[] = {
 	{ "[M]",  monocle },
 };
 
-/* monitors */
+/* monitors. width/height/refresh_mhz=0 keeps wlroots' preferred mode;
+ * set all three (refresh in millihertz, e.g. 120000) to force a mode. */
 static const MonitorRule monrules[] = {
-	{ NULL, WS_MFACT, 1, 1, &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL, -1, -1 },
+	{ WS_MONITOR_NAME, WS_MFACT, 1, 1, &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL, -1, -1,
+	  WS_MONITOR_WIDTH, WS_MONITOR_HEIGHT, WS_MONITOR_REFRESH_MHZ },
 };
 
 /* keyboard */
