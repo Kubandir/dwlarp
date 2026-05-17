@@ -573,6 +573,23 @@ ly_build_from_source() {
 	) || { warn "ly: build failed (zig version mismatch?)"; return 1; }
 }
 
+# Void-only: enable elogind + dbus runit services and wire pam_elogind
+# into /etc/pam.d/system-login.  Without this, agetty logins don't get
+# XDG_RUNTIME_DIR and dwl exits immediately with "XDG_RUNTIME_DIR must
+# be set".  arch/debian have systemd-logind doing this natively, so the
+# function is a no-op on those.
+ensure_session_manager() {
+	[ "$DISTRO" = void ] || return 0
+	have elogind || have loginctl || { warn "elogind missing — XDG_RUNTIME_DIR won't be set at login"; return 0; }
+	sv_enable elogind
+	sv_enable dbus
+	if [ -f /etc/pam.d/system-login ] && ! grep -q pam_elogind /etc/pam.d/system-login; then
+		say "wiring pam_elogind into /etc/pam.d/system-login"
+		# Leading dash = optional load; matches the void-recommended line.
+		echo '-session   optional   pam_elogind.so' | $SUDO tee -a /etc/pam.d/system-login >/dev/null
+	fi
+}
+
 set_default_shell() {
 	have zsh || { warn "zsh missing — skipping default-shell change"; return 0; }
 	zsh_path=$(command -v zsh)
@@ -639,6 +656,8 @@ say "ensuring GTK/icon/cursor themes"; ensure_themes; apply_papirus_color
 install_wayfreeze
 say "seeding configs and scripts"; seed_configs; install_scripts
 say "installing fonts"; install_fonts
+say "wiring elogind/dbus for XDG_RUNTIME_DIR at login"; ensure_session_manager
+
 if [ "$(read_num WS_INSTALL_LY)" = 0 ]; then
 	say "ly: skipped (WS_INSTALL_LY=0). Falling back to tty1 autostart."
 	ensure_tty1_autostart
