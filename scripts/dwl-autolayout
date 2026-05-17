@@ -45,7 +45,7 @@ WALL=${DWL_WALLPAPER:-${XDG_DATA_HOME:-$HOME/.local/share}/dwl/wallpaper.png}
 
 # Pull all enabled outputs into shell vars: classify and pick the largest
 # external. awk does the parsing & decision in one shot, emits sh assignments.
-eval "$(wlr-randr | awk '
+eval "$(timeout 3 wlr-randr 2>/dev/null | awk '
     function flush() {
         if (!en || !w || !h) return
         if (n ~ /^(eDP|LVDS)/) { iname=n; iw=w; ih=h }
@@ -72,7 +72,7 @@ repaint() {
 # this, dwl-wallpaper's bounding box stays huge and crops a tiny slice.
 if [ -z "${ENAME:-}" ] || [ -z "${INAME:-}" ]; then
     only=${INAME:-${ENAME:-}}
-    [ -n "$only" ] && wlr-randr --output "$only" --pos 0,0 || true
+    [ -n "$only" ] && timeout 3 wlr-randr --output "$only" --pos 0,0 || true
     repaint
     exit 0
 fi
@@ -112,7 +112,7 @@ if [ "$ey" -lt "$iy" ]; then sy=$(( -ey )); else sy=$(( -iy )); fi
 ex=$(( ex + sx )); ix=$(( ix + sx ))
 ey=$(( ey + sy )); iy=$(( iy + sy ))
 
-wlr-randr --output "$ENAME" --pos "${ex},${ey}" \
-          --output "$INAME" --pos "${ix},${iy}"
+timeout 3 wlr-randr --output "$ENAME" --pos "${ex},${ey}" \
+                    --output "$INAME" --pos "${ix},${iy}"
 
 repaint

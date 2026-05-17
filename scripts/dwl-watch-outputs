@@ -9,11 +9,14 @@ set -eu
 
 prev=""
 while :; do
-    cur=$(wlr-randr 2>/dev/null | awk '
+    # timeout: some wlroots+Nvidia builds stall wlr-output-management and
+    # wlr-randr never returns. Skip the iteration instead of hanging the
+    # loop forever (and accumulating zombie wlr-randr processes).
+    cur=$(timeout 3 wlr-randr 2>/dev/null | awk '
         /^[^ \t]/      { n=$1 }
         /Enabled: yes/ { print n }
     ' | sort)
-    if [ "$cur" != "$prev" ]; then
+    if [ -n "$cur" ] && [ "$cur" != "$prev" ]; then
         prev=$cur
         "$HOME/.local/bin/dwl-autolayout" || true
         # Poke leftstatus to re-emit immediately so the new bar on a freshly

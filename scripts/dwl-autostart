@@ -31,18 +31,22 @@ if ! pgrep -x pipewire >/dev/null 2>&1; then
     fi
 fi
 
-# Output layout + wallpaper. dwl-watch-outputs polls at 1Hz and calls
-# dwl-autolayout on add/remove — that handles positioning AND repaints the
-# wallpaper across the new set of monitors. Plug-and-play; no per-machine
-# config needed. Layout policy (above|below|left|right of internal) lives in
+# Paint the wallpaper first as a safety net — swaybg with no -o spans all
+# enabled outputs and doesn't need wlr-randr. On some wlroots+Nvidia builds
+# the wlr-output-management protocol stalls and wlr-randr hangs; without
+# this, dwl-watch-outputs would never call dwl-autolayout and the screen
+# would stay black.
+WALL="${XDG_DATA_HOME:-$HOME/.local/share}/dwl/wallpaper.png"
+[ -f "$WALL" ] && command -v swaybg >/dev/null 2>&1 && _restart swaybg swaybg -i "$WALL" -m fill
+
+# Smart layout/repaint. dwl-watch-outputs polls wlr-randr at 1Hz and calls
+# dwl-autolayout on output add/remove — that positions external monitors
+# relative to the internal and slices the wallpaper across them. Best-
+# effort: if wlr-randr hangs, the safety-net swaybg above stays put.
+# Layout policy (above|below|left|right of internal) lives in
 # ~/.config/dwl/layout (one word).
-if [ -x "$HOME/.local/bin/dwl-watch-outputs" ]; then
+[ -x "$HOME/.local/bin/dwl-watch-outputs" ] && \
     _restart dwl-watch-outputs "$HOME/.local/bin/dwl-watch-outputs"
-else
-    # Last-resort fallback: paint a single-image wallpaper, no layout magic.
-    WALL="${XDG_DATA_HOME:-$HOME/.local/share}/dwl/wallpaper.png"
-    [ -f "$WALL" ] && command -v swaybg >/dev/null 2>&1 && _restart swaybg swaybg -i "$WALL" -m fill
-fi
 
 command -v mako >/dev/null 2>&1 && _restart mako mako
 
@@ -86,7 +90,10 @@ if command -v mullvad-vpn >/dev/null 2>&1; then
     ) &
 fi
 
-command -v ws-hud >/dev/null 2>&1 && _restart ws-hud ws-hud
+# ws-hud lives in ~/.local/bin (dwlarp install target). Use the absolute
+# path so it spawns even on hosts whose login shell hasn't added
+# ~/.local/bin to PATH (no /etc/profile.d/xdg.sh).
+[ -x "$HOME/.local/bin/ws-hud" ] && _restart ws-hud "$HOME/.local/bin/ws-hud"
 
 # xdg-desktop-portal (file pickers, screen share). libexec path differs across distros.
 find_portal() {

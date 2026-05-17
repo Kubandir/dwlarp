@@ -14,8 +14,11 @@ command -v swaybg    >/dev/null || { echo "swaybg required"    >&2; exit 1; }
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/dwl-wallpaper"
 mkdir -p "$CACHE"
 
-# Per-output "name x y w h" from wlr-randr's plain-text dump.
-LAYOUT=$(wlr-randr | awk '
+# Per-output "name x y w h" from wlr-randr's plain-text dump. wlr-randr
+# can hang on wlroots+Nvidia (wlr-output-management stall); a timeout
+# leaves LAYOUT empty and the script exits without clobbering existing
+# swaybg state.
+LAYOUT=$(timeout 3 wlr-randr 2>/dev/null | awk '
     function flush() { if (n && en) print n, x, y, w, h }
     /^[^ \t]/        { flush(); n=$1; en=0; x=0; y=0; w=0; h=0 }
     /Enabled: yes/   { en=1 }
