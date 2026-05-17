@@ -147,6 +147,18 @@ install_deps() {
 	fi
 	case "$DISTRO" in
 		void)
+			# librewolf isn't in Void's official repos. If it's in the
+			# package list, drop the index-0/librewolf-void community
+			# repo into /etc/xbps.d/ before the sync so the next step
+			# can resolve it. Idempotent.
+			case " $pkgs " in
+				*' librewolf '*)
+					if [ ! -f /etc/xbps.d/20-librewolf.conf ]; then
+						say "adding librewolf-void xbps repo (index-0/librewolf-void)"
+						printf 'repository=https://github.com/index-0/librewolf-void/releases/latest/download/\n' \
+							| $SUDO tee /etc/xbps.d/20-librewolf.conf >/dev/null
+					fi ;;
+			esac
 			$SUDO xbps-install -Sy >/dev/null || warn "repo sync failed"
 			missing=
 			for p in $pkgs; do
