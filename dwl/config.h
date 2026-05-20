@@ -41,6 +41,12 @@ enum Direction { DIR_LEFT, DIR_RIGHT, DIR_UP, DIR_DOWN };
 /* logging */
 static int log_level = WLR_ERROR;
 
+/* app_ids that act as "swallower" terminals — when a GUI app maps and any
+ * ancestor in its PPid chain is a managed client whose app_id contains one
+ * of these substrings, the new GUI takes the terminal's tile slot and the
+ * terminal hides until the GUI exits. */
+static const char *swallowappids[] = { WS_SWALLOW_APPIDS };
+
 static const Rule rules[] = {
 	/* app_id                     title  tags mask  isfloating  monitor */
 	/* xdg-desktop-portal frontends (file chooser, screencast picker, etc.)

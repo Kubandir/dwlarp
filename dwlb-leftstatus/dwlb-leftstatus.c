@@ -40,18 +40,27 @@ static void emit(void) {
 	fflush(stdout);
 }
 
-int main(void) {
-	signal(SIGPIPE, SIG_IGN);
-
-	int tfd = timerfd_create(CLOCK_REALTIME, TFD_CLOEXEC);
-	if (tfd < 0) return 1;
-
+/* (Re)anchor the timerfd to the next CLOCK_REALTIME minute boundary. Called
+ * at startup and after a TFD_TIMER_CANCEL_ON_SET cancellation (NTP step at
+ * boot, manual `timedatectl set-time`, suspend/resume on hosts where the
+ * RTC gets stepped at wake). Without this the periodic schedule keeps
+ * firing relative to the pre-step absolute time and the bar's :00 drifts. */
+static int arm_minute_timer(int tfd) {
 	time_t now = time(NULL);
 	struct itimerspec spec = {
 		.it_value    = { .tv_sec = now - (now % 60) + 60, .tv_nsec = 0 },
 		.it_interval = { .tv_sec = 60, .tv_nsec = 0 },
 	};
-	if (timerfd_settime(tfd, TFD_TIMER_ABSTIME, &spec, NULL) < 0) return 1;
+	return timerfd_settime(tfd, TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET,
+	                       &spec, NULL);
+}
+
+int main(void) {
+	signal(SIGPIPE, SIG_IGN);
+
+	int tfd = timerfd_create(CLOCK_REALTIME, TFD_CLOEXEC);
+	if (tfd < 0) return 1;
+	if (arm_minute_timer(tfd) < 0) return 1;
 
 	sigset_t mask; sigemptyset(&mask);
 	sigaddset(&mask, SIGTERM); sigaddset(&mask, SIGINT); sigaddset(&mask, SIGHUP);
@@ -79,7 +88,12 @@ int main(void) {
 		}
 		if (pfd[0].revents & POLLIN) {
 			uint64_t exp;
-			(void)!read(tfd, &exp, sizeof exp);
+			ssize_t r = read(tfd, &exp, sizeof exp);
+			if (r < 0 && errno == ECANCELED) {
+				/* CLOCK_REALTIME was stepped — re-anchor to the
+				 * new wall-clock minute boundary and emit now. */
+				if (arm_minute_timer(tfd) < 0) return 1;
+			}
 			emit();
 		}
 	}

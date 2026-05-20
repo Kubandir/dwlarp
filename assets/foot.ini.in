@@ -25,29 +25,29 @@ label-letters=sadfjklewcmpgh
 osc8-underline=always
 
 [colors-dark]
-alpha=0.7
-background=000000
-foreground=e6e8ee
-selection-foreground=0d1418
-selection-background=c8b8e8
+alpha=@T_ALPHA@
+background=@T_BG@
+foreground=@T_FG@
+selection-foreground=@T_SELFG@
+selection-background=@T_SELBG@
 
-regular0=3a3a4a
-regular1=f5a8b0
-regular2=a8e6b8
-regular3=f5d9a8
-regular4=a8c8f0
-regular5=d9b0f0
-regular6=a8e6e0
-regular7=d8dce4
+regular0=@T_R0@
+regular1=@T_R1@
+regular2=@T_R2@
+regular3=@T_R3@
+regular4=@T_R4@
+regular5=@T_R5@
+regular6=@T_R6@
+regular7=@T_R7@
 
-bright0=5c5c70
-bright1=ffc4cc
-bright2=c4f0d0
-bright3=ffe6c4
-bright4=c4dcff
-bright5=eccaff
-bright6=c4f0ec
-bright7=f0f4fa
+bright0=@T_B0@
+bright1=@T_B1@
+bright2=@T_B2@
+bright3=@T_B3@
+bright4=@T_B4@
+bright5=@T_B5@
+bright6=@T_B6@
+bright7=@T_B7@
 
 [key-bindings]
 scrollback-up-page=Shift+Page_Up

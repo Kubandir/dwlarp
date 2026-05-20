@@ -130,7 +130,7 @@ apply_layout(Monitor *m, LayoutNode *node,
 void
 btrtile(Monitor *m)
 {
-	Client *c, *focused = NULL;
+	Client *c;
 	int n = 0;
 	LayoutNode *found;
 	struct wlr_box full_area;
@@ -139,24 +139,42 @@ btrtile(Monitor *m)
 		return;
 
 	/* Remove non tiled clients from tree. Keep fullscreen clients so their
-	 * BSP slot is reserved and the layout isn't reshuffled around them. */
+	 * BSP slot is reserved and the layout isn't reshuffled around them.
+	 * Skip clients hidden by swallowing (`swallowedby` set) — their slot
+	 * is owned by the child that swallowed them, so we must not touch
+	 * the tree on their behalf. */
 	wl_list_for_each(c, &clients, link) {
-		if (c->mon == m && !c->isfloating) {
-		} else {
+		if (c->mon == m && !c->isfloating && !c->swallowedby) {
+		} else if (!c->swallowedby) {
 			remove_client(m, c);
 		}
 	}
 
-	/* If no client is found under cursor, fallback to focustop(m) */
-	if (!(focused = xytoclient(cursor->x, cursor->y)))
-		focused = focustop(m);
-
-	/* Insert visible clients that are not part of the tree. */
+	/* Insert visible clients that are not part of the tree. Hidden parents
+	 * (swallowedby set) stay out — their visible child already occupies
+	 * their slot. The drop target must be (a) not the client we're inserting
+	 * and (b) already in the tree — otherwise insert_client's fallback
+	 * branch hardcodes a vertical root split, which appears as a new column
+	 * regardless of the preview's split direction. */
 	wl_list_for_each(c, &clients, link) {
-		if (VISIBLEON(c, m) && !c->isfloating && c->mon == m) {
+		if (VISIBLEON(c, m) && !c->isfloating && c->mon == m && !c->swallowedby) {
 			found = find_client_node(m->root, c);
 			if (!found) {
-				insert_client(m, focused, c);
+				Client *t, *tc;
+				t = xytoclient(cursor->x, cursor->y);
+				if (!t || t == c || !find_client_node(m->root, t))
+					t = focustop(m);
+				if (!t || t == c || !find_client_node(m->root, t)) {
+					t = NULL;
+					wl_list_for_each(tc, &clients, link) {
+						if (tc != c && tc->mon == m && !tc->isfloating
+						    && !tc->swallowedby && find_client_node(m->root, tc)) {
+							t = tc;
+							break;
+						}
+					}
+				}
+				insert_client(m, t, c);
 			}
 			n++;
 		}
@@ -650,7 +668,7 @@ xytoclient(double x, double y) {
 	double dist, mindist = INT_MAX, dx, dy;
 
 	wl_list_for_each_reverse(c, &clients, link) {
-		if (VISIBLEON(c, selmon) && !c->isfloating && !c->isfullscreen &&
+		if (VISIBLEON(c, selmon) && !c->isfloating && !c->isfullscreen && !c->swallowedby &&
 			x >= c->geom.x && x <= (c->geom.x + c->geom.width) &&
 			y >= c->geom.y && y <= (c->geom.y + c->geom.height)){
 			return c;
@@ -659,7 +677,7 @@ xytoclient(double x, double y) {
 
 	/* If no client was found at cursor position fallback to closest. */
 	wl_list_for_each_reverse(c, &clients, link) {
-		if (VISIBLEON(c, selmon) && !c->isfloating && !c->isfullscreen) {
+		if (VISIBLEON(c, selmon) && !c->isfloating && !c->isfullscreen && !c->swallowedby) {
 			dx = 0, dy = 0;
 
 			if (x < c->geom.x)

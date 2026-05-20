@@ -106,7 +106,8 @@ typedef struct {
 
 typedef struct LayoutNode LayoutNode;
 typedef struct Monitor Monitor;
-typedef struct {
+typedef struct Client Client;
+struct Client {
 	/* Must keep this field first */
 	unsigned int type; /* XDGShell or X11* */
 
@@ -145,7 +146,17 @@ typedef struct {
 	int isfloating, isurgent, isfullscreen, was_tiled;
 	uint32_t resize; /* configure serial of a pending resize */
 	struct wlr_box old_geom;
-} Client;
+	/* Window swallowing. `swallowing` is the parent terminal this client
+	 * is hiding (NULL = not swallowing anything). `swallowedby` is the
+	 * child currently hiding this client (NULL = visible). At most one
+	 * direction is ever non-NULL on any given client. pid is cached at
+	 * map time so the PPid walk doesn't keep re-issuing
+	 * wl_client_get_credentials syscalls. */
+	Client *swallowing;
+	Client *swallowedby;
+	pid_t pid;
+	unsigned int swallow_retried : 1; /* commitnotify retries swallow once */
+};
 
 typedef struct {
 	struct wl_list link;
@@ -260,6 +271,8 @@ typedef struct {
 /* function declarations */
 static void applybounds(Client *c, struct wlr_box *bbox);
 static void applyrules(Client *c);
+static pid_t client_pid(Client *c);
+static void trytoswallow(Client *c);
 static void arrange(Monitor *m);
 static void arrangelayer(Monitor *m, struct wl_list *list,
 		struct wlr_box *usable_area, int exclusive);
@@ -565,8 +578,11 @@ arrange(Monitor *m)
 
 	wl_list_for_each(c, &clients, link) {
 		if (c->mon == m) {
-			wlr_scene_node_set_enabled(&c->scene->node, VISIBLEON(c, m));
-			client_set_suspended(c, !VISIBLEON(c, m));
+			/* Swallowed parents must stay hidden across arrange()s; without
+			 * this gate every layout pass would unhide them. */
+			wlr_scene_node_set_enabled(&c->scene->node,
+				VISIBLEON(c, m) && !c->swallowedby);
+			client_set_suspended(c, !VISIBLEON(c, m) || c->swallowedby);
 		}
 	}
 
@@ -676,7 +692,7 @@ buttonpress(struct wl_listener *listener, void *data)
 	struct wlr_pointer_button_event *event = data;
 	struct wlr_keyboard *keyboard;
 	uint32_t mods;
-	Client *c, *target = NULL;
+	Client *c;
 	const Button *b;
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
@@ -710,16 +726,22 @@ buttonpress(struct wl_listener *listener, void *data)
 			c = grabc;
 			if (c && c->was_tiled && !strcmp(selmon->ltsymbol, "|w|")) {
 				if (cursor_mode == CurMove && c->isfloating) {
-					target = xytoclient(cursor->x, cursor->y);
-
-					if (target && !target->isfloating && !target->isfullscreen)
-						insert_client(selmon, target, c);
-					else
-						selmon->root = create_client_node(c);
-
+					/* Un-float and let the arrange chain do the BSP
+					 * insertion. setmon() below calls arrange(dest)
+					 * which calls btrtile, whose insert_client uses
+					 * xytoclient(cursor) (falling back to focustop)
+					 * for the split target — same logic the old
+					 * explicit insert had. Doing the insert here is
+					 * destructive: on a cross-monitor drop c->mon is
+					 * still the source, so arrange(selmon=dest)
+					 * immediately removes c from the just-built tree,
+					 * and the no-target branch overwrote
+					 * selmon->root, wiping any tree the destination
+					 * already had — that's what made existing
+					 * windows on the other monitor "spawn floating"
+					 * until grabbed. */
 					setfloating(c, 0);
 					arrange(selmon);
-
 				} else if (cursor_mode == CurResize && !c->isfloating) {
 					resizing_from_mouse = 0;
 					finish_mouse_resize(cursor->x, cursor->y);
@@ -969,6 +991,18 @@ commitnotify(struct wl_listener *listener, void *data)
 	/* mark a pending resize as completed */
 	if (c->resize && c->resize <= c->surface.xdg->current.configure_serial)
 		c->resize = 0;
+
+	/* Swallow retry: mapnotify's first attempt can lose to a race where
+	 * client_pid() returns 0 (wl_client credentials not propagated yet) or
+	 * the PPid chain hasn't linked through the launcher shell yet. By the
+	 * time we get a real (non-initial) commit, both are settled — try once
+	 * more. Bounded by the bitfield so we don't retry forever. */
+	if (!c->swallowing && !c->swallowedby && !c->swallow_retried
+	    && !c->isfloating && !c->isfullscreen) {
+		c->swallow_retried = 1;
+		if (!c->pid) c->pid = client_pid(c);
+		trytoswallow(c);
+	}
 }
 
 void
@@ -2037,6 +2071,130 @@ locksession(struct wl_listener *listener, void *data)
 	wlr_session_lock_v1_send_locked(session_lock);
 }
 
+/* ---- swallowing -------------------------------------------------------- */
+
+static int
+is_swallower_appid(Client *c)
+{
+	const char *id = client_get_appid(c);
+	size_t i;
+	if (!id) return 0;
+	for (i = 0; i < LENGTH(swallowappids); i++)
+		if (swallowappids[i] && strstr(id, swallowappids[i]))
+			return 1;
+	return 0;
+}
+
+static pid_t
+client_pid(Client *c)
+{
+	pid_t pid = 0;
+#ifdef XWAYLAND
+	if (client_is_x11(c))
+		return c->surface.xwayland->pid;
+#endif
+	if (c->surface.xdg && c->surface.xdg->client && c->surface.xdg->client->client)
+		wl_client_get_credentials(c->surface.xdg->client->client, &pid, NULL, NULL);
+	return pid;
+}
+
+static pid_t
+ppid_of(pid_t pid)
+{
+	char path[64], buf[256];
+	FILE *f;
+	pid_t ppid = 0;
+	if (pid <= 1) return 0;
+	snprintf(path, sizeof path, "/proc/%d/status", (int)pid);
+	if (!(f = fopen(path, "r"))) return 0;
+	while (fgets(buf, sizeof buf, f))
+		if (sscanf(buf, "PPid: %d", &ppid) == 1) break;
+	fclose(f);
+	return ppid;
+}
+
+/* Walk PPid chain up from `pid`; return the first managed Client whose
+ * cached pid matches an ancestor and is a swallower. Bounded so a forked
+ * shell-script tree (or a bogus /proc) can't make us loop. */
+static Client *
+find_swallower(pid_t pid, Client *self)
+{
+	Client *c;
+	int depth = 0;
+	while (pid > 1 && depth++ < 32) {
+		pid = ppid_of(pid);
+		if (pid <= 1) return NULL;
+		wl_list_for_each(c, &clients, link) {
+			if (c == self || c->swallowedby)
+				continue;
+			/* Lazy-fetch: a terminal that mapped before its
+			 * wl_client credentials were ready could have c->pid==0,
+			 * which would silently disqualify it as a swallower. */
+			if (!c->pid) c->pid = client_pid(c);
+			if (!c->pid) continue;
+			if (c->pid == pid && is_swallower_appid(c))
+				return c;
+		}
+	}
+	return NULL;
+}
+
+static void
+trytoswallow(Client *c)
+{
+	Client *p;
+	LayoutNode *node;
+	if (c->isfloating || c->isfullscreen) return;
+	if (is_swallower_appid(c)) return;            /* terminals don't swallow */
+	if (!c->pid) return;
+	if (!(p = find_swallower(c->pid, c))) return;
+	if (p->isfloating || p->isfullscreen) return;
+	if (!p->mon || !p->mon->root) return;
+	if (!(node = find_client_node(p->mon->root, p))) return;
+
+	/* Inherit the hidden parent's tile slot. setmon() is the cheapest way to
+	 * migrate tags+monitor if mapnotify's applyrules dropped c elsewhere. */
+	if (c->mon != p->mon)
+		setmon(c, p->mon, p->tags);
+	c->tags = p->tags;
+
+	/* mapnotify's initial arrange already inserted c as its own leaf — pull
+	 * it back out before overwriting p's slot, otherwise the tree ends up
+	 * with two leaves pointing at c and apply_layout halves the area. */
+	remove_client(c->mon, c);
+	if (!(node = find_client_node(p->mon->root, p))) return;
+
+	node->client = c;
+	p->swallowedby = c;
+	c->swallowing  = p;
+	wlr_scene_node_set_enabled(&p->scene->node, 0);
+	client_set_suspended(p, 1);
+	c->geom = p->geom;
+	arrange(c->mon);
+	focusclient(c, 1);
+}
+
+static void
+unswallow(Client *c)
+{
+	Client *p = c->swallowing;
+	LayoutNode *node;
+	if (!p) return;
+	c->swallowing  = NULL;
+	p->swallowedby = NULL;
+	/* Swap the BSP slot back to the parent. find_client_node walks the
+	 * tree by Client*, and c is what's there now. */
+	if (p->mon && p->mon->root
+	    && (node = find_client_node(p->mon->root, c)))
+		node->client = p;
+	if (client_surface(p)->mapped) {
+		wlr_scene_node_set_enabled(&p->scene->node, 1);
+		p->geom = c->geom; /* apply_layout will repaint exactly here */
+	}
+}
+
+/* ------------------------------------------------------------------------ */
+
 void
 mapnotify(struct wl_listener *listener, void *data)
 {
@@ -2095,6 +2253,8 @@ mapnotify(struct wl_listener *listener, void *data)
 	} else {
 		applyrules(c);
 	}
+	c->pid = client_pid(c);
+	trytoswallow(c);
 	/* Center floating windows on their monitor's usable area instead of
 	 * letting them spawn at (0,0) — gives proper popup/dialog placement.
 	 * Must call resize() since applyrules→setmon already positioned the
@@ -2312,8 +2472,10 @@ moveresize(const Arg *arg)
 		switch (cursor_mode) {
 		case CurMove:
 			setfloating(grabc, 1);
-			grabcx = (int)round(cursor->x) - grabc->geom.x;
-			grabcy = (int)round(cursor->y) - grabc->geom.y;
+			/* Anchor by window center so the cursor sits in the middle of
+			 * the dragged window regardless of where the grab started. */
+			grabcx = grabc->geom.width  / 2;
+			grabcy = grabc->geom.height / 2;
 			grab_cursor_name = "fleur";
 			break;
 		case CurResize: {
@@ -2345,8 +2507,8 @@ moveresize(const Arg *arg)
 		setfloating(grabc, 1);
 		switch (cursor_mode) {
 		case CurMove:
-			grabcx = (int)round(cursor->x) - grabc->geom.x;
-			grabcy = (int)round(cursor->y) - grabc->geom.y;
+			grabcx = grabc->geom.width  / 2;
+			grabcy = grabc->geom.height / 2;
 			grab_cursor_name = "fleur";
 			break;
 		case CurResize:
@@ -3191,6 +3353,13 @@ spawn(const Arg *arg)
 	if (fork() == 0) {
 		dup2(STDERR_FILENO, STDOUT_FILENO);
 		setsid();
+		/* Expose the focused output's name so children (dmenu-launcher,
+		 * ws-powermenu, ws-pomodoro, screenshot-area, …) can place
+		 * themselves on the monitor the user is actually looking at
+		 * instead of whichever output the compositor enumerated first.
+		 * dmenu-wl -m NAME consumes this directly. */
+		if (selmon && selmon->wlr_output && selmon->wlr_output->name)
+			setenv("DWL_SELMON_OUTPUT", selmon->wlr_output->name, 1);
 		execvp(((char **)arg->v)[0], (char **)arg->v);
 		/* _exit, not exit/die: atexit handlers registered in the
 		 * parent (Nvidia libGL/Vulkan, EGL, ICDs) touch state
@@ -3374,6 +3543,18 @@ unmapnotify(struct wl_listener *listener, void *data)
 			focusclient(focustop(selmon), 1);
 		}
 	} else {
+		/* Restore a hidden parent terminal (if any) BEFORE the BSP cleanup
+		 * below; unswallow swaps the tile slot's Client* back, so the
+		 * parent picks up the geometry the child was at instead of
+		 * being re-inserted at a default position. */
+		unswallow(c);
+		/* If something else was hiding behind this client, that parent is
+		 * stranded — drop the dangling references so the dwm-style
+		 * "swallowing dies first" path doesn't UAF. */
+		if (c->swallowedby) {
+			c->swallowedby->swallowing = NULL;
+			c->swallowedby = NULL;
+		}
 		wl_list_remove(&c->link);
 		setmon(c, NULL, 0);
 		wl_list_remove(&c->flink);
@@ -3517,13 +3698,23 @@ urgent(struct wl_listener *listener, void *data)
 void
 view(const Arg *arg)
 {
+	Client *c = NULL;
 	if (!selmon || (arg->ui & TAGMASK) == selmon->tagset[selmon->seltags])
 		return;
 	selmon->seltags ^= 1; /* toggle sel tagset */
 	if (arg->ui & TAGMASK)
 		selmon->tagset[selmon->seltags] = arg->ui & TAGMASK;
-	focusclient(focustop(selmon), 1);
 	arrange(selmon);
+	/* Sloppyfocus: focus the client under the cursor on the new tagset, not
+	 * the prior top-of-stack. focusclient's internal motionnotify uses
+	 * time=0, which pointerfocus skips for sloppyfocus — so without
+	 * resolving the under-cursor client here, focus would stick to
+	 * focustop(selmon) until the mouse moves. */
+	if (sloppyfocus)
+		xytonode(cursor->x, cursor->y, NULL, &c, NULL, NULL, NULL);
+	if (!c || !VISIBLEON(c, selmon) || client_is_unmanaged(c))
+		c = focustop(selmon);
+	focusclient(c, 1);
 	printstatus();
 }
 

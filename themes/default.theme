@@ -1,0 +1,73 @@
+# dwlarp theme — default ("stormwater": teal/dark, current upstream look)
+#
+# Sourced as POSIX sh by install.sh:apply_theme(). Each variable is
+# written verbatim into the corresponding config.h macro or template
+# placeholder — keep the format the consumer wants (RGBA hex for the
+# bar, ARGB for the HUD, "#rrggbb" strings for status text, etc.).
+# Anything not set here keeps whatever value the host config.h holds.
+
+# ---- compositor (RGBA hex, 8 chars) -------------------------------
+WS_BG=222222ff
+WS_BORDER=1e3a3aff
+WS_FOCUS=3a7268ff
+WS_URGENT=ff0000ff
+
+# ---- bar (RGBA hex) -----------------------------------------------
+WS_BAR_BG=000000cc
+WS_BAR_FG=ffffffff
+WS_BAR_ACTIVE_BG=2a2f3acc
+WS_BAR_URGENT_BG=ee3300ff
+
+# ---- swaylock (hex string, alpha optional) ------------------------
+WS_LOCK_SCREEN_HEX=000000
+WS_LOCK_RING_HEX=3a7268a6
+WS_LOCK_TEXT_HEX=a8d5cc
+WS_LOCK_WRONG_HEX=d06878a6
+
+# ---- bar text ("#rrggbb") -----------------------------------------
+WS_STATUS_FG=#ffffff
+WS_STATUS_SEP=#7a808b
+WS_LEFTST_FG=#ffffff
+WS_LEFTST_DATE_FG=#cfd3da
+WS_STATUS_VPN_ON_FG=#7fbf9f
+WS_STATUS_VPN_STALE_FG=#ff5050
+WS_STATUS_VPN_OFF_FG=#ffaa20
+
+# ---- HUD (ARGB hex, 8 chars; install.sh adds the `u` literal) -----
+WS_HUD_BG=cc000000
+WS_HUD_FG=ff1e3a3a
+WS_HUD_ON=ff3a7268
+WS_HUD_HOLD=ff5fa090
+WS_HUD_WARN=ffd04848
+WS_HUD_ICON=ffffffff
+
+# ---- foot terminal (bare hex, no `#`; T_ALPHA is a float 0..1) ----
+T_ALPHA=0.7
+T_BG=000000
+T_FG=e6e8ee
+T_SELFG=0d1418
+T_SELBG=c8b8e8
+T_R0=3a3a4a;  T_R1=f5a8b0;  T_R2=a8e6b8;  T_R3=f5d9a8
+T_R4=a8c8f0;  T_R5=d9b0f0;  T_R6=a8e6e0;  T_R7=d8dce4
+T_B0=5c5c70;  T_B1=ffc4cc;  T_B2=c4f0d0;  T_B3=ffe6c4
+T_B4=c4dcff;  T_B5=eccaff;  T_B6=c4f0ec;  T_B7=f0f4fa
+
+# ---- mako notifications ("#rrggbb[aa]") ---------------------------
+M_BG=#0d1418f0
+M_FG=#c8e8f0
+M_BORDER=#3a7268
+M_PROG=#1a3630
+M_LOW=#1e3a3a
+M_CRIT=#ffffff
+M_MUTE_BG=#3a1418f0
+M_MUTE_BORDER=#a04050
+M_MUTE_FG=#f0c8c8
+
+# ---- dmenu / launchers ("#rrggbb", no alpha — dmenu can't do it) --
+D_NB=#000000
+D_NF=#ffffff
+D_SB=#2a2f3a
+D_SF=#ffffff
+
+# ---- wallpaper (path; relative to repo root or absolute) ----------
+WALLPAPER=assets/wallpaper.png

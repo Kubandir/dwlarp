@@ -15,8 +15,13 @@ _restart() {
     && . "${XDG_CONFIG_HOME:-$HOME/.config}/dwlarp/env"
 
 # Export wayland env to dbus / systemd user so portals & spawned daemons see it.
+# XDG_CURRENT_DESKTOP=wlroots: xdg-desktop-portal-wlr's wlr.portal lists
+# `UseIn=wlroots;sway;…` and does NOT include `dwl`, so calling it "dwl"
+# breaks ScreenCast routing. "wlroots" matches and is the canonical
+# generic for any wlroots compositor.
+export XDG_CURRENT_DESKTOP=wlroots
 dbus-update-activation-environment --systemd \
-    DISPLAY WAYLAND_DISPLAY XDG_CURRENT_DESKTOP=dwl XDG_SESSION_TYPE=wayland \
+    DISPLAY WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE=wayland \
     XCURSOR_THEME XCURSOR_SIZE 2>/dev/null
 
 # Audio — leave an existing PipeWire instance alone (systemd --user already
@@ -103,8 +108,14 @@ find_portal() {
 }
 PORTAL=$(find_portal xdg-desktop-portal)
 PORTAL_GTK=$(find_portal xdg-desktop-portal-gtk)
+PORTAL_WLR=$(find_portal xdg-desktop-portal-wlr)
 if [ -n "$PORTAL" ]; then
     (
+        # wlr backend first — it owns ScreenCast/Screenshot per dwl-portals.conf,
+        # and starting it before the main portal avoids a race where the first
+        # screen-share request resolves to a backend that doesn't implement it.
+        [ -n "$PORTAL_WLR" ] && "$PORTAL_WLR" &
+        sleep 0.3
         sleep 2; "$PORTAL" --replace &
         [ -n "$PORTAL_GTK" ] && { sleep 0.5; "$PORTAL_GTK" --replace & }
     ) &

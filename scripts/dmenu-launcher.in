@@ -118,12 +118,13 @@ stale() {
     return 1
 }
 
-# First run pays the parse cost; subsequent runs are instant.
-[ -f "$APPS" ] || build "$APPS"
-
-# Refresh in the background so the NEXT launch picks up any changes.
-if stale; then
-    (build "$APPS" </dev/null >/dev/null 2>&1) &
+# Rebuild synchronously whenever the source dirs/files changed. stale() is
+# cheap (one find + a couple of mtime comparisons), and rebuilding before
+# the menu opens means a freshly-installed .desktop shows up on the very
+# next Win+R press instead of the launch after. Previous design rebuilt in
+# the background, which always left the menu one launch behind.
+if [ ! -f "$APPS" ] || stale; then
+    build "$APPS"
 fi
 
 APPDB=$(cat "$APPS")
@@ -138,15 +139,25 @@ _menu() {
 }
 
 # Match the dwlb bar exactly: same font (FiraCode Nerd Font bold size 11),
-# same bg (#000000cc — matches WS_BAR_BG), and the workspace-active gray
-# (#2a2f3acc — matches WS_BAR_ACTIVE_BG) for the selected entry highlight.
+# same bg as WS_BAR_BG (alpha stripped — dmenu can't do transparency) and
+# the workspace-active tint as WS_BAR_ACTIVE_BG for the selected entry.
+# Colors are substituted at install time from the active theme (see
+# themes/<name>.theme : D_NB / D_NF / D_SB / D_SF).
+# dwl sets DWL_SELMON_OUTPUT to selmon's wl_output name (e.g. eDP-1, DP-2)
+# in spawn(); dmenu-wl's -m takes either an index or an output name and
+# anchors the layer surface to that monitor. Without this, dmenu-wl
+# defaults to monitors[0] (the first output dwl's wl_registry enumerates,
+# usually the laptop panel) regardless of where the user is looking.
+mon_arg=
+[ -n "${DWL_SELMON_OUTPUT:-}" ] && mon_arg="-m $DWL_SELMON_OUTPUT"
+# shellcheck disable=SC2086
 selection=$(
     _menu | awk '!seen[$0]++' | \
-    dmenu-wl -i -p 'run:' \
+    dmenu-wl -i -p 'run:' $mon_arg \
         -fn 'FiraCode Nerd Font Bold 11' \
         -h 28 \
-        -nb '#000000' -nf '#ffffff' \
-        -sb '#2a2f3a' -sf '#ffffff'
+        -nb '@D_NB@' -nf '@D_NF@' \
+        -sb '@D_SB@' -sf '@D_SF@'
 )
 
 [ -z "$selection" ] && exit 0

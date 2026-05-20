@@ -321,11 +321,14 @@ end session"
 $entries"
 	fi
 
-	pick=$(printf '%s\n' "$entries" | dmenu-wl -i -p 'pomodoro:' \
+	mon_arg=
+	[ -n "${DWL_SELMON_OUTPUT:-}" ] && mon_arg="-m $DWL_SELMON_OUTPUT"
+	# shellcheck disable=SC2086
+	pick=$(printf '%s\n' "$entries" | dmenu-wl -i -p 'pomodoro:' $mon_arg \
 		-fn 'FiraCode Nerd Font Bold 11' \
 		-h 28 \
-		-nb '#000000' -nf '#ffffff' \
-		-sb '#2a2f3a' -sf '#ffffff') || exit 0
+		-nb '@D_NB@' -nf '@D_NF@' \
+		-sb '@D_SB@' -sf '@D_SF@') || exit 0
 
 	case $pick in
 		'start session')   start ;;

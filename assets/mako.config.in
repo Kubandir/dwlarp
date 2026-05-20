@@ -11,10 +11,10 @@ border-radius=0
 default-timeout=5000
 ignore-timeout=0
 
-background-color=#0d1418f0
-text-color=#c8e8f0
-border-color=#3a7268
-progress-color=over #1a3630
+background-color=@M_BG@
+text-color=@M_FG@
+border-color=@M_BORDER@
+progress-color=over @M_PROG@
 
 icons=1
 max-icon-size=48
@@ -30,15 +30,15 @@ anchor=bottom-right
 invisible=1
 
 [urgency=low]
-border-color=#1e3a3a
+border-color=@M_LOW@
 default-timeout=3000
 
 [urgency=normal]
-border-color=#3a7268
+border-color=@M_BORDER@
 default-timeout=5000
 
 [urgency=critical]
-border-color=#ffffff
+border-color=@M_CRIT@
 default-timeout=0
 ignore-timeout=1
 
@@ -57,7 +57,7 @@ width=320
 height=64
 padding=14
 border-size=2
-border-color=#3a7268
+border-color=@M_BORDER@
 text-alignment=center
 group-by=app-name
 
@@ -66,6 +66,6 @@ group-by=app-name
 # script publishes mute events with `-c muted`; this rule overrides the
 # styling above. Geometry / anchor / alignment are inherited.
 [category=muted]
-background-color=#3a1418f0
-border-color=#a04050
-text-color=#f0c8c8
+background-color=@M_MUTE_BG@
+border-color=@M_MUTE_BORDER@
+text-color=@M_MUTE_FG@

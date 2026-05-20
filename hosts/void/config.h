@@ -209,7 +209,7 @@
 #define WS_VPN_STALE_S       180
 #define WS_VPN_KILLSWITCH      1
 #define WS_VPN_WATCHDOG        1
-#define WS_VPN_REGION       "cz"
+#define WS_VPN_REGION       "de"
 
 /* ------------------------------------------------------------
  * HUD WIDGET (ws-hud) — hover-revealed button panel that slides
@@ -243,7 +243,7 @@
  *   icon         nerd-font codepoint shown in the button (0 = blank)
  * Add or remove rows freely; widget width auto-fits the count. */
 #define WS_HUD_BUTTONS \
-	{ 1, "pkill -x wlsunset; wlsunset -T 2801 -t 2800",  "pkill -x wlsunset",              NULL, "pgrep -x wlsunset >/dev/null", 0xf186 }, /* moon — night mode override (~2800K while toggled; wlsunset requires T>t). Autostart already schedules wlsunset 20:00→07:00; this kills the scheduled instance and forces a more intense flat temp. */ \
+	{ 1, "pkill -x wlsunset; wlsunset -T 2801 -t 2800",  "pkill -x wlsunset",              NULL, "pgrep -fx 'wlsunset -T 2801 -t 2800' >/dev/null || { pgrep -x wlsunset >/dev/null && h=$(date +%H) && { [ $h -ge 20 ] || [ $h -lt 7 ]; }; }", 0xf186 }, /* moon — night mode. ON when (a) the override `wlsunset -T 2801 -t 2800` is running, OR (b) the scheduled wlsunset is running AND we're in the night window (20:00–07:00). Toggling ON kills the schedule and forces a flatter 2800K; toggling OFF kills wlsunset entirely until next dwl-autostart. */ \
 	{ 1, "makoctl mode -a do-not-disturb", "makoctl mode -r do-not-disturb", NULL, NULL,                          0xf1f6 }, /* bell-slash — DND (needs the [mode=do-not-disturb] block in mako config) */ \
 	{ 1, "ws-hud-lidlock on",              "ws-hud-lidlock off",             NULL, "ws-hud-lidlock status | grep -qx on", 0xf023 }, /* lock — inhibit lid-close hibernate (holds elogind handle-lid-switch lock) */ \
 	{ 1, "foot -T ws-hud-mullvad --app-id=ws-hud-mullvad -e mullvad-menu", \
@@ -296,6 +296,9 @@
  * APP COMMANDS
  * ------------------------------------------------------------ */
 #define WS_TERM_CMD       "foot"
+/* Terminal app_ids whose GUI children take their tile slot (window swallowing).
+ * Substring match against app_id — "foot" matches both foot and footclient. */
+#define WS_SWALLOW_APPIDS "foot"
 #define WS_LAUNCHER_CMD   "dmenu-launcher"
 #define WS_BROWSER_CMD    "librewolf"
 #define WS_EDITOR_CMD     "code"

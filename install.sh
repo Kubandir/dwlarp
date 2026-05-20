@@ -3,8 +3,10 @@
 #
 # Usage:
 #     ./install.sh                full install (greeter, fonts, configs, ly)
-#     ./install.sh --rebuild      rebuild C projects only (after editing config.h)
-#     ./install.sh --skip-deps    skip distro packages
+#     ./install.sh -r|--rebuild   rebuild C projects only (after editing config.h)
+#     ./install.sh -d|--skip-deps skip distro packages
+#     ./install.sh -t NAME        switch to themes/NAME.theme and rebuild
+#     ./install.sh -t list        list available themes and exit
 #     ./install.sh -y             non-interactive
 #     ./install.sh -h             help
 #
@@ -13,16 +15,20 @@
 
 set -eu
 
-REBUILD=0; SKIP_DEPS=0; FORCE=${FORCE:-0}
-for a in "$@"; do
-	case "$a" in
+REBUILD=0; SKIP_DEPS=0; FORCE=${FORCE:-0}; THEME=
+while [ $# -gt 0 ]; do
+	case "$1" in
 		-r|--rebuild)         REBUILD=1 ;;
 		-d|--skip-deps)       SKIP_DEPS=1 ;;
 		-f|--force)           FORCE=1 ;;
 		-y|--noconfirm)       ;;   # accepted for compatibility; install is non-interactive
-		-h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-		*) printf 'unknown flag: %s\n' "$a" >&2; exit 2 ;;
+		-t|--theme)           [ $# -ge 2 ] || { printf '%s: %s needs an argument\n' "$0" "$1" >&2; exit 2; }
+		                      THEME=$2; REBUILD=1; shift ;;
+		--theme=*)            THEME=${1#*=}; REBUILD=1 ;;
+		-h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+		*) printf 'unknown flag: %s\n' "$1" >&2; exit 2 ;;
 	esac
+	shift
 done
 export FORCE
 
@@ -62,6 +68,60 @@ fi
 say "host = $HOST"
 cp "$SRC/hosts/$HOST/config.h" "$SRC/config.h"
 
+# ---- theme overlay ----
+# A theme is a POSIX-sh fragment in themes/<name>.theme that pins every
+# user-visible color (compositor, bar, lock, status text, HUD, foot,
+# mako, dmenu) plus a wallpaper path. apply_theme sed-patches the WS_*
+# color macros in the just-copied root config.h, and exports the rest
+# of the vars into this shell so seed_configs / install_scripts can use
+# them when rendering templates. The active theme name is cached so a
+# bare `./install.sh --rebuild` re-applies the same theme.
+THEME_CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/dwlarp/active-theme
+
+if [ "$THEME" = list ]; then
+	ls "$SRC/themes" 2>/dev/null | sed -n 's/\.theme$//p'
+	exit 0
+fi
+if [ -z "$THEME" ] && [ -r "$THEME_CACHE" ]; then
+	THEME=$(cat "$THEME_CACHE")
+fi
+THEME=${THEME:-default}
+[ -f "$SRC/themes/$THEME.theme" ] || die "no such theme: $THEME (expected $SRC/themes/$THEME.theme)"
+say "theme = $THEME"
+
+# Source theme into the current shell. Every var named in the theme
+# file is now available to the rest of the installer.
+# shellcheck disable=SC1090
+. "$SRC/themes/$THEME.theme"
+
+# Patch the just-copied root config.h with the theme's color values.
+patch_hex_macro() {  # $1=macro $2=replacement (no 0x/u, just the hex)
+	sed -i "s|^\\(#define $1[[:space:]]\\+\\)0x[0-9a-fA-F]\\+|\\10x$2|" "$SRC/config.h"
+}
+patch_hud_macro() {  # HUD macros end in `u` — preserve it
+	sed -i "s|^\\(#define $1[[:space:]]\\+\\)0x[0-9a-fA-F]\\+u|\\10x${2}u|" "$SRC/config.h"
+}
+patch_str_macro() {  # $1=macro $2=value (verbatim inside the quotes)
+	v=$(printf '%s' "$2" | sed 's|[\\&|]|\\&|g')
+	sed -i "s|^\\(#define $1[[:space:]]\\+\\)\"[^\"]*\"|\\1\"$v\"|" "$SRC/config.h"
+}
+for m in WS_BG WS_BORDER WS_FOCUS WS_URGENT \
+         WS_BAR_BG WS_BAR_FG WS_BAR_ACTIVE_BG WS_BAR_URGENT_BG; do
+	eval v=\${$m:-}; [ -n "$v" ] && patch_hex_macro "$m" "$v"
+done
+for m in WS_HUD_BG WS_HUD_FG WS_HUD_ON WS_HUD_HOLD WS_HUD_WARN WS_HUD_ICON; do
+	eval v=\${$m:-}; [ -n "$v" ] && patch_hud_macro "$m" "$v"
+done
+for m in WS_LOCK_SCREEN_HEX WS_LOCK_RING_HEX WS_LOCK_TEXT_HEX WS_LOCK_WRONG_HEX \
+         WS_STATUS_FG WS_STATUS_SEP WS_LEFTST_FG WS_LEFTST_DATE_FG \
+         WS_STATUS_VPN_ON_FG WS_STATUS_VPN_STALE_FG WS_STATUS_VPN_OFF_FG; do
+	eval v=\${$m:-}; [ -n "$v" ] && patch_str_macro "$m" "$v"
+done
+[ -n "${WALLPAPER:-}" ] && patch_str_macro WS_WALLPAPER "$WALLPAPER"
+
+mkdir -p "$(dirname "$THEME_CACHE")"
+printf '%s\n' "$THEME" > "$THEME_CACHE"
+
 # ---- distro detection ----
 . /etc/os-release
 case "${ID:-}${ID_LIKE:-}" in
@@ -87,7 +147,7 @@ PKGS_void="
 	elogind seatd
 	foot swaybg mako brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr ImageMagick
-	xdg-desktop-portal xdg-desktop-portal-gtk
+	xdg-desktop-portal xdg-desktop-portal-gtk xdg-desktop-portal-wlr
 	adwaita-icon-theme hicolor-icon-theme papirus-icon-theme papirus-folders
 	sassc
 	xorg-server-xwayland fontconfig
@@ -104,7 +164,7 @@ PKGS_arch="
 	zsh zsh-autosuggestions zsh-completions zsh-history-substring-search zsh-syntax-highlighting
 	foot swaybg mako brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr imagemagick
-	xdg-desktop-portal xdg-desktop-portal-gtk
+	xdg-desktop-portal xdg-desktop-portal-gtk xdg-desktop-portal-wlr
 	adwaita-icon-theme hicolor-icon-theme papirus-icon-theme
 	sassc
 	xorg-xwayland fontconfig
@@ -125,7 +185,7 @@ PKGS_debian="
 	zsh zsh-autosuggestions zsh-syntax-highlighting
 	foot swaybg mako-notifier brightnessctl playerctl swaylock
 	grim slurp wl-clipboard wlr-randr imagemagick
-	xdg-desktop-portal xdg-desktop-portal-gtk xwayland
+	xdg-desktop-portal xdg-desktop-portal-gtk xdg-desktop-portal-wlr xwayland
 	adwaita-icon-theme hicolor-icon-theme papirus-icon-theme
 	sassc
 	wlsunset pulsemixer bluez
@@ -380,11 +440,18 @@ build_all() {
 }
 
 # ---- scripts (single source of truth, used by full install AND --rebuild) ----
-SCRIPTS="dwl-autostart dwl-wallpaper dwl-autolayout dwl-watch-outputs screenshot-area dmenu-launcher dwl-osd ws-pomodoro ws-powermenu ws-hud-lidlock"
+SCRIPTS="dwl-autostart dwl-wallpaper dwl-autolayout dwl-watch-outputs screenshot-area dwl-osd ws-hud-lidlock"
+# Themed (dmenu colors substituted from the active theme — see apply_theme).
+THEMED_SCRIPTS="dmenu-launcher ws-pomodoro ws-powermenu"
 install_scripts() {
 	mkdir -p "$HOME/.local/bin"
 	for s in $SCRIPTS; do
 		install_if_changed "" 755 "$SRC/scripts/$s" "$HOME/.local/bin/$s"
+	done
+	for s in $THEMED_SCRIPTS; do
+		install_template "" 755 "$SRC/scripts/$s.in" "$HOME/.local/bin/$s" \
+			-e "s|@D_NB@|$D_NB|g" -e "s|@D_NF@|$D_NF|g" \
+			-e "s|@D_SB@|$D_SB|g" -e "s|@D_SF@|$D_SF|g"
 	done
 	rm -f "$HOME/.local/bin/bemenu-desktop"  # legacy launcher
 	# /usr/bin so ly's PATH (which lists /usr/bin before /usr/local/bin) picks
@@ -449,8 +516,25 @@ read_num() { awk -v k="$1" '$1=="#define" && $2==k { print $3; exit }' "$SRC/con
 seed_configs() {
 	cfg="${XDG_CONFIG_HOME:-$HOME/.config}"
 	[ -f "$cfg/dwl/layout"    ] || { mkdir -p "$cfg/dwl"; echo above > "$cfg/dwl/layout"; }
-	[ -f "$cfg/foot/foot.ini" ] || install -Dm644 "$SRC/assets/foot.ini"   "$cfg/foot/foot.ini"
-	[ -f "$cfg/mako/config"   ] || install -Dm644 "$SRC/assets/mako.config" "$cfg/mako/config"
+	# foot.ini + mako/config are rendered from the active theme's vars
+	# (sourced at apply-theme time, top of install.sh). install_template
+	# only rewrites the dst when the rendered output differs, so this is
+	# a no-op when the user re-runs the same theme.
+	mkdir -p "$cfg/foot" "$cfg/mako"
+	install_template "" 644 "$SRC/assets/foot.ini.in" "$cfg/foot/foot.ini" \
+		-e "s|@T_ALPHA@|$T_ALPHA|g" \
+		-e "s|@T_BG@|$T_BG|g"       -e "s|@T_FG@|$T_FG|g" \
+		-e "s|@T_SELFG@|$T_SELFG|g" -e "s|@T_SELBG@|$T_SELBG|g" \
+		-e "s|@T_R0@|$T_R0|g" -e "s|@T_R1@|$T_R1|g" -e "s|@T_R2@|$T_R2|g" -e "s|@T_R3@|$T_R3|g" \
+		-e "s|@T_R4@|$T_R4|g" -e "s|@T_R5@|$T_R5|g" -e "s|@T_R6@|$T_R6|g" -e "s|@T_R7@|$T_R7|g" \
+		-e "s|@T_B0@|$T_B0|g" -e "s|@T_B1@|$T_B1|g" -e "s|@T_B2@|$T_B2|g" -e "s|@T_B3@|$T_B3|g" \
+		-e "s|@T_B4@|$T_B4|g" -e "s|@T_B5@|$T_B5|g" -e "s|@T_B6@|$T_B6|g" -e "s|@T_B7@|$T_B7|g"
+	install_template "" 644 "$SRC/assets/mako.config.in" "$cfg/mako/config" \
+		-e "s|@M_BG@|$M_BG|g"             -e "s|@M_FG@|$M_FG|g" \
+		-e "s|@M_BORDER@|$M_BORDER|g"     -e "s|@M_PROG@|$M_PROG|g" \
+		-e "s|@M_LOW@|$M_LOW|g"           -e "s|@M_CRIT@|$M_CRIT|g" \
+		-e "s|@M_MUTE_BG@|$M_MUTE_BG|g"   -e "s|@M_MUTE_BORDER@|$M_MUTE_BORDER|g" \
+		-e "s|@M_MUTE_FG@|$M_MUTE_FG|g"
 
 	# xdg-desktop-portal: tell it to route FileChooser/AppChooser/Settings to
 	# the gtk backend (file pickers) and screencast/screenshot to wlr.
