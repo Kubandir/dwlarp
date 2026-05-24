@@ -2,7 +2,7 @@
 # dwlarp installer. Supported: Void Linux.
 #
 # Usage:
-#     ./install.sh                full install (greeter, fonts, configs, ly)
+#     ./install.sh                full install (fonts, configs, tty1 autologin)
 #     ./install.sh -r|--rebuild   rebuild C projects only (after editing config.h)
 #     ./install.sh -d|--skip-deps skip distro packages
 #     ./install.sh -t NAME        switch to themes/NAME.theme and rebuild
@@ -149,7 +149,6 @@ PKGS_void="
 	papirus-icon-theme papirus-folders
 	sassc
 	xorg-server-xwayland fontconfig
-	pam-devel
 	bluetuith impala pulsemixer
 	wireguard-tools jq libnotify
 	nftables e2fsprogs
@@ -379,8 +378,7 @@ install_scripts() {
 	done
 	rm -f "$HOME/.local/bin/bemenu-desktop"  # legacy launcher
 	rm -f "$HOME/.local/bin/dmenu-launcher" "$HOME/.local/bin/ws-hud-lidlock"  # replaced by twl
-	# /usr/bin so ly's PATH (which lists /usr/bin before /usr/local/bin) picks
-	# up the dbus-wrapping launcher.
+	# /usr/bin so the system PATH picks up the dbus-wrapping launcher.
 	install_if_changed "$SUDO" 755 "$SRC/scripts/dwlarp"         /usr/bin/dwlarp
 	install_if_changed "$SUDO" 644 "$SRC/desktop/dwlarp.desktop" /usr/share/wayland-sessions/dwlarp.desktop
 	# Drop legacy entries from earlier installs.
@@ -561,30 +559,23 @@ install_fonts() {
 		|| warn "FiraCode Nerd Font not detected — bar/foot may render boxes"
 }
 
-# ---- ly greeter ----
-ly_enable() {
-	[ -f /etc/ly/config.ini ] || $SUDO install -Dm644 "$SRC/assets/ly.config.ini" /etc/ly/config.ini
-	if [ ! -s /etc/ly/save.ini ]; then
-		u=${SUDO_USER:-$(id -un)}
-		[ "$u" = root ] && u=$(awk -F: '$3>=1000 && $3<60000 && $7!~"nologin|false"{print $1; exit}' /etc/passwd)
-		[ -n "$u" ] && printf 'user=%s\nsession_index=0\n' "$u" \
-			| $SUDO tee /etc/ly/save.ini >/dev/null
+# ---- TTY1 autologin via agetty ----
+# Patches /etc/sv/agetty-tty1/conf to add --autologin <user> to GETTY_ARGS.
+# agetty's run script sources conf, so no binary needs touching. Idempotent.
+ensure_autologin_tty1() {
+	conf=/etc/sv/agetty-tty1/conf
+	[ -f "$conf" ] || { warn "agetty-tty1 service not found — autologin skipped"; return 0; }
+	u=${SUDO_USER:-$(id -un)}
+	[ "$u" = root ] && u=$(awk -F: '$3>=1000 && $3<60000 && $7!~"nologin|false"{print $1; exit}' /etc/passwd)
+	[ -n "$u" ] || { warn "could not determine login user — autologin skipped"; return 0; }
+	if grep -q -- "--autologin" "$conf" 2>/dev/null; then
+		# Already present — update the username in case it changed.
+		$SUDO sed -i "s/--autologin [^ \"]*/--autologin $u/" "$conf"
+	else
+		$SUDO sed -i "s/GETTY_ARGS=\"/GETTY_ARGS=\"--autologin $u /" "$conf"
 	fi
-	[ -L /var/service/ly ] || $SUDO ln -s /etc/sv/ly /var/service/ly
-	say "ly enabled — reboot to take effect"
-}
-
-ly_build_from_source() {
-	$SUDO xbps-install -Sy zig pam-devel libxcb-devel >/dev/null 2>&1 || true
-	have zig || { warn "ly: zig unavailable — skipping"; return 1; }
-	tmp=$(mktemp -d)
-	git clone --depth=1 https://github.com/fairyglade/ly.git "$tmp/ly" \
-		|| { warn "ly: clone failed"; return 1; }
-	(
-		cd "$tmp/ly"
-		zig build
-		$SUDO zig build installexe -Dinit_system=runit
-	) || { warn "ly: build failed (zig version mismatch?)"; return 1; }
+	sv_enable agetty-tty1
+	say "tty1 autologin → $u"
 }
 
 # Void-only: enable elogind + dbus runit services and wire pam_elogind
@@ -618,7 +609,7 @@ set_default_shell() {
 	have zsh || { warn "zsh missing — skipping default-shell change"; return 0; }
 	# pam_shells does a literal string match against /etc/shells (no symlink
 	# resolution), so the path we hand to chsh MUST appear verbatim there or
-	# login/ly/swaylock will reject the user. command -v can return /sbin/zsh
+	# login will reject the user. command -v can return /sbin/zsh
 	# on Void (where /sbin → usr/bin), which is typically absent from /etc/shells.
 	zsh_path=
 	for cand in /bin/zsh /usr/bin/zsh "$(command -v zsh)"; do
@@ -645,14 +636,13 @@ set_default_shell() {
 }
 
 # Append a tty1 → dwlarp autostart block to the login profile (idempotent via
-# marker comment). Used when WS_INSTALL_LY=0: without a greeter, the user
-# needs *something* to bring up the session at login.
+# marker comment). Pairs with ensure_autologin_tty1: agetty drops into the shell
+# automatically, and the shell launches dwlarp when it detects tty1.
 #
 # Path selection: set_default_shell just made zsh the login shell, and on Void
 # /etc/zsh/zshenv exports ZDOTDIR=$HOME/.config/zsh — so zsh reads
 # $ZDOTDIR/.zprofile, NOT $HOME/.zprofile. We source the system zshenv to
-# resolve the actual ZDOTDIR for this user; falling back to $HOME for non-zsh
-# or unset cases.
+# resolve the actual ZDOTDIR for this user; falling back to $HOME otherwise.
 ensure_tty1_autostart() {
 	profile="$HOME/.zprofile"
 	if command -v zsh >/dev/null 2>&1; then
@@ -687,13 +677,6 @@ fi
 EOF
 }
 
-install_ly() {
-	have ly && { say "ly already installed"; ly_enable; return; }
-	$SUDO xbps-install -Sy ly 2>/dev/null && have ly && { ly_enable; return; }
-	say "building ly from source"
-	ly_build_from_source && ly_enable
-}
-
 # ════════════════════════════════════════════════════════════════════════════
 
 if [ "$REBUILD" -eq 1 ]; then
@@ -718,13 +701,9 @@ say "seeding configs and scripts"; seed_configs; install_scripts
 say "installing fonts"; install_fonts
 say "wiring elogind/dbus for XDG_RUNTIME_DIR at login"; ensure_session_manager
 
-if [ "$(read_num WS_INSTALL_LY)" = 0 ]; then
-	say "ly: skipped (WS_INSTALL_LY=0). Falling back to tty1 autostart."
-	ensure_tty1_autostart
-else
-	say "installing ly greeter"
-	install_ly || { warn "ly install failed — falling back to tty1 autostart"; ensure_tty1_autostart; }
-fi
+say "configuring tty1 autologin + dwlarp autostart"
+ensure_autologin_tty1
+ensure_tty1_autostart
 
 set_default_shell
 
@@ -732,7 +711,7 @@ case ":${PATH}:" in *":$HOME/.local/bin:"*) ;;
 	*) warn "$HOME/.local/bin not in PATH — add it to your shell rc" ;;
 esac
 
-say "done — pick 'dwlarp' at the greeter (or run dwlarp from a TTY)"
+say "done — reboot, TTY1 will autologin and launch dwlarp"
 say "rebuild after editing config.h:  ./install.sh --rebuild"
 say "mullvad: bootstrap once with  sudo mullvad-wg-setup <ACCOUNT>"
 say "mullvad: runit services (mullvad-watchdog, nftables-mullvad) start automatically within 5s"

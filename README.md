@@ -18,8 +18,8 @@ cd dwlarp
 ./install.sh
 ```
 
-After it finishes, log out and pick **dwlarp** at the display manager (or reboot
-to TTY1 if you skipped ly).
+After it finishes, reboot. agetty autologs into TTY1 and the shell starts
+dwlarp automatically.
 
 ## Flags
 
@@ -38,13 +38,10 @@ to TTY1 if you skipped ly).
 | `~/.local/bin/twl`                           | widget daemon (bar/HUD/OSD/menu/notif)|
 | `~/.local/bin/twlctl`                        | twl control socket client            |
 | `/usr/bin/dwlarp`                            | session entrypoint (`Exec=` in .desktop) |
-| `/usr/share/wayland-sessions/dwlarp.desktop` | greeter entry                        |
+| `/usr/share/wayland-sessions/dwlarp.desktop` | wayland-session entry (optional)     |
 | `~/.local/bin/dwl-autostart`                 | per-session autostart                |
 | `~/.local/bin/screenshot-area`               | grim+slurp helper                    |
 | `~/.local/share/dwl/wallpaper.png`           | shipped wallpaper                    |
-
-A browser is **not** installed — `WS_BROWSER_CMD` in `hosts/<host>/config.h`
-controls what `Win+S` launches (default: `librewolf`).
 
 ## Configuration
 
@@ -81,6 +78,6 @@ twl/                     # widget daemon (bar, HUD, OSD, menu, notifications)
 mullvad-menu/            # wireguard relay picker
 scripts/                 # dwlarp, dwl-autostart, dwl-osd, ws-pomodoro, …
 desktop/                 # dwlarp.desktop
-assets/                  # wallpaper, foot/ly/gtk templates, runit sv files
+assets/                  # wallpaper, foot/gtk templates, runit sv files
 themes/                  # *.theme color overlays
 ```

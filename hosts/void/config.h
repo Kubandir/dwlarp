@@ -15,11 +15,6 @@
  * decide what renders in the bar regardless of this. */
 #define WS_FORM_FACTOR     "laptop"
 
-/* Install ly greeter? 1 = yes (default), 0 = skip (install.sh will then
- * append a tty1→dwlarp autostart to ~/.zprofile). Skip on hosts where
- * Void's zig is too old for upstream ly's build.zig.zon. */
-#define WS_INSTALL_LY      1
-
 /* GPU vendor — installer reads this to wire renderer + VA-API + cursor env
  * into ~/.config/dwlarp/env. "intel" leaves wlroots on its default (gles2 +
  * HW cursors, fine on Intel/AMD). "nvidia" picks the vulkan renderer + SW
