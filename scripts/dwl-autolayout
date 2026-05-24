@@ -41,10 +41,10 @@ if [ -n "$OFFSET" ]; then
     esac
 fi
 
-WALL=${DWL_WALLPAPER:-${XDG_DATA_HOME:-$HOME/.local/share}/dwl/wallpaper.png}
-
 # Pull all enabled outputs into shell vars: classify and pick the largest
 # external. awk does the parsing & decision in one shot, emits sh assignments.
+# Wallpaper repaint isn't our job — twl recreates per-output widgets on
+# wl_output add/remove and paints each one itself.
 eval "$(timeout 3 wlr-randr 2>/dev/null | awk '
     function flush() {
         if (!en || !w || !h) return
@@ -61,19 +61,10 @@ eval "$(timeout 3 wlr-randr 2>/dev/null | awk '
     }
 ')"
 
-repaint() {
-    if [ -f "$WALL" ] && command -v dwl-wallpaper >/dev/null 2>&1; then
-        dwl-wallpaper "$WALL" &
-    fi
-}
-
-# Single output (or no external). Pin whichever output we have to (0,0) so a
-# stale offset from a previous multi-monitor layout doesn't survive — without
-# this, dwl-wallpaper's bounding box stays huge and crops a tiny slice.
+# Single output (or no external). Pin whichever output we have to (0,0).
 if [ -z "${ENAME:-}" ] || [ -z "${INAME:-}" ]; then
     only=${INAME:-${ENAME:-}}
     [ -n "$only" ] && timeout 3 wlr-randr --output "$only" --pos 0,0 || true
-    repaint
     exit 0
 fi
 
@@ -114,5 +105,3 @@ ey=$(( ey + sy )); iy=$(( iy + sy ))
 
 timeout 3 wlr-randr --output "$ENAME" --pos "${ex},${ey}" \
                     --output "$INAME" --pos "${ix},${iy}"
-
-repaint

@@ -1,12 +1,12 @@
 #!/bin/sh
-# ws-pomodoro — suckless pomodoro timer wired to mako + kew.
+# ws-pomodoro — suckless pomodoro timer wired to twl notifications + kew.
 #
 # Default cycle: 30 min work / 30 min break, repeating. Music (kew, shuffled
 # from $HOME/important/music) plays during work and pauses during break.
 #
 # Architecture:
 #   - one daemon process ticks once per second, owns timer state, drives
-#     mako notifications and music transitions
+#     desktop notifications and music transitions
 #   - the menu front-end (Win+p) appends commands to a queue file and
 #     pokes the daemon with SIGUSR1; the daemon's signal handler drains
 #     the queue. State is also dumped to a plain file so the menu can
@@ -14,7 +14,7 @@
 #
 # Subcommands:
 #   ws-pomodoro daemon           run the tick loop (one-only)
-#   ws-pomodoro menu             open the dmenu front-end (Win+p)
+#   ws-pomodoro menu             open the twlctl menu front-end (Win+p)
 #   ws-pomodoro start            begin a session (auto-spawns daemon)
 #   ws-pomodoro end              end session, show recap, stop daemon
 #   ws-pomodoro pause            pause current stage (persistent notif)
@@ -67,7 +67,7 @@ notify_sync() {
 }
 
 dismiss_sync() {
-	# Replace with a 1ms-timeout notif so mako closes it immediately.
+	# Replace with a 1ms-timeout notif so twl closes it immediately.
 	notify-send -a ws-pomodoro -t 1 \
 		-h "string:x-canonical-private-synchronous:$1" \
 		" " >/dev/null 2>&1 || true
@@ -142,23 +142,31 @@ music_start() {
 		</dev/null >/dev/null 2>&1
 }
 
+# MPRIS control via raw dbus-send (dbus-tools ships with dbus, no playerctl
+# dep). kew exposes the standard org.mpris.MediaPlayer2.Player interface.
+mpris() {
+	dbus-send --session --type=method_call \
+		--dest=org.mpris.MediaPlayer2.kew /org/mpris/MediaPlayer2 \
+		"org.mpris.MediaPlayer2.Player.$1" >/dev/null 2>&1
+}
+
 music_play() {
 	music_start
 	# MPRIS may take a moment to register on first launch.
 	for _ in 1 2 3 4 5 6 7 8; do
-		playerctl --player=kew play >/dev/null 2>&1 && return 0
+		mpris Play && return 0
 		sleep 0.25
 	done
 }
 
 music_pause() {
 	music_running || return 0
-	playerctl --player=kew pause >/dev/null 2>&1 || true
+	mpris Pause || true
 }
 
 music_stop() {
 	music_running || return 0
-	playerctl --player=kew stop >/dev/null 2>&1 || true
+	mpris Stop || true
 	pkill -x kew 2>/dev/null || true
 }
 
@@ -297,6 +305,7 @@ menu() {
 	state_load
 	running=0; daemon_running && running=1
 
+	# Build the IFS-newline list of items first, then split for twlctl menu.
 	if [ "$running" = 0 ] || [ "$stage" = idle ]; then
 		entries="start session"
 	elif [ "$paused" = 1 ]; then
@@ -321,14 +330,16 @@ end session"
 $entries"
 	fi
 
-	mon_arg=
-	[ -n "${DWL_SELMON_OUTPUT:-}" ] && mon_arg="-m $DWL_SELMON_OUTPUT"
+	# Split newline-separated entries into argv for twlctl menu. Reply
+	# format is "<idx>\t<text>"; idx == -1 on cancel.
+	oldIFS=$IFS; IFS='
+'
 	# shellcheck disable=SC2086
-	pick=$(printf '%s\n' "$entries" | dmenu-wl -i -p 'pomodoro:' $mon_arg \
-		-fn 'FiraCode Nerd Font Bold 11' \
-		-h 28 \
-		-nb '@D_NB@' -nf '@D_NF@' \
-		-sb '@D_SB@' -sf '@D_SF@') || exit 0
+	set -- $entries
+	IFS=$oldIFS
+	reply=$(twlctl menu 'pomodoro:' "$@") || exit 0
+	[ "${reply%%	*}" -lt 0 ] 2>/dev/null && exit 0
+	pick=${reply#*	}
 
 	case $pick in
 		'start session')   start ;;

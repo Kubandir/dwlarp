@@ -36,36 +36,21 @@ if ! pgrep -x pipewire >/dev/null 2>&1; then
     fi
 fi
 
-# Paint the wallpaper first as a safety net — swaybg with no -o spans all
-# enabled outputs and doesn't need wlr-randr. On some wlroots+Nvidia builds
-# the wlr-output-management protocol stalls and wlr-randr hangs; without
-# this, dwl-watch-outputs would never call dwl-autolayout and the screen
-# would stay black.
-WALL="${XDG_DATA_HOME:-$HOME/.local/share}/dwl/wallpaper.png"
-[ -f "$WALL" ] && command -v swaybg >/dev/null 2>&1 && _restart swaybg swaybg -i "$WALL" -m fill
-
-# Smart layout/repaint. dwl-watch-outputs polls wlr-randr at 1Hz and calls
-# dwl-autolayout on output add/remove — that positions external monitors
-# relative to the internal and slices the wallpaper across them. Best-
-# effort: if wlr-randr hangs, the safety-net swaybg above stays put.
+# Wallpaper, bar, HUD, OSD, menu, notifications, and native output-add/remove
+# (which triggers dwl-autolayout on monitor hotplug) — all owned by twl.
+# Started by scripts/dwlarp via `dwl -s ... twl`, so nothing to spawn here.
 # Layout policy (above|below|left|right of internal) lives in
 # ~/.config/dwl/layout (one word).
-[ -x "$HOME/.local/bin/dwl-watch-outputs" ] && \
-    _restart dwl-watch-outputs "$HOME/.local/bin/dwl-watch-outputs"
 
-command -v mako >/dev/null 2>&1 && _restart mako mako
-
-# Night mode schedule: warm the screen from 20:00 to 07:00. wlsunset
-# manages the gamma ramp continuously; ws-hud's moon toggle overrides
-# this with a flatter, more intense temperature when pressed.
-command -v wlsunset >/dev/null 2>&1 && _restart wlsunset wlsunset -S 07:00 -s 20:00 -t 2800 -T 6500
+# Night mode schedule + moon HUD override now owned by twl itself
+# (gamma.c speaks zwlr_gamma_control_v1 directly). wlsunset retired.
 
 # Mullvad VPN — connect by default at login. Block up to 10s for the wifi
 # layer (iwd) to acquire a default route before attempting the handshake —
 # the previous unconditional `up` raced iwd association on cold boot and
 # bailed out before a single relay could be pinged. Backgrounded so dwl-
-# autostart returns promptly; the result is surfaced via mako so a missing
-# relay cache or sudoers permission isn't silent.
+# autostart returns promptly; the result is surfaced via twl notifications
+# so a missing relay cache or sudoers permission isn't silent.
 if command -v mullvad-vpn >/dev/null 2>&1; then
     (
         # Wait for L3: a default route AND a reachable nameserver. ip-route
@@ -94,11 +79,6 @@ if command -v mullvad-vpn >/dev/null 2>&1; then
         fi
     ) &
 fi
-
-# ws-hud lives in ~/.local/bin (dwlarp install target). Use the absolute
-# path so it spawns even on hosts whose login shell hasn't added
-# ~/.local/bin to PATH (no /etc/profile.d/xdg.sh).
-[ -x "$HOME/.local/bin/ws-hud" ] && _restart ws-hud "$HOME/.local/bin/ws-hud"
 
 # xdg-desktop-portal (file pickers, screen share). libexec path differs across distros.
 find_portal() {

@@ -1,5 +1,5 @@
 #!/bin/sh
-# dwlarp installer. Supported: Void, Arch, Debian/Ubuntu.
+# dwlarp installer. Supported: Void Linux.
 #
 # Usage:
 #     ./install.sh                full install (greeter, fonts, configs, ly)
@@ -70,8 +70,8 @@ cp "$SRC/hosts/$HOST/config.h" "$SRC/config.h"
 
 # ---- theme overlay ----
 # A theme is a POSIX-sh fragment in themes/<name>.theme that pins every
-# user-visible color (compositor, bar, lock, status text, HUD, foot,
-# mako, dmenu) plus a wallpaper path. apply_theme sed-patches the WS_*
+# user-visible color (compositor, bar, lock, status text, HUD, foot)
+# plus a wallpaper path. apply_theme sed-patches the WS_*
 # color macros in the just-copied root config.h, and exports the rest
 # of the vars into this shell so seed_configs / install_scripts can use
 # them when rendering templates. The active theme name is cached so a
@@ -125,10 +125,8 @@ printf '%s\n' "$THEME" > "$THEME_CACHE"
 # ---- distro detection ----
 . /etc/os-release
 case "${ID:-}${ID_LIKE:-}" in
-	*void*)            DISTRO=void ;;
-	*arch*|*manjaro*)  DISTRO=arch ;;
-	*debian*|*ubuntu*) DISTRO=debian ;;
-	*) die "unsupported distro: ${PRETTY_NAME:-unknown}" ;;
+	*void*) DISTRO=void ;;
+	*) die "unsupported distro: ${PRETTY_NAME:-unknown} (Void Linux only)" ;;
 esac
 
 have_pipewire() {
@@ -141,110 +139,56 @@ PKGS_void="
 	wayland-devel wayland-protocols libxkbcommon-devel libinput-devel
 	pixman-devel libxcb-devel xcb-util-wm-devel libdrm-devel
 	libseat-devel hwids libdisplay-info-devel pulseaudio-devel
-	pango-devel cairo-devel glib-devel ncurses-devel
 	fcft-devel
 	zsh zsh-autosuggestions zsh-completions zsh-history-substring-search zsh-syntax-highlighting
 	elogind seatd
-	foot swaybg mako brightnessctl playerctl swaylock
-	grim slurp wl-clipboard wlr-randr ImageMagick
+	foot
+	grim slurp wl-clipboard wlr-randr
+	stb
 	xdg-desktop-portal xdg-desktop-portal-gtk xdg-desktop-portal-wlr
-	adwaita-icon-theme hicolor-icon-theme papirus-icon-theme papirus-folders
+	papirus-icon-theme papirus-folders
 	sassc
 	xorg-server-xwayland fontconfig
-	wlsunset bluetuith impala pulsemixer
+	pam-devel
+	bluetuith impala pulsemixer
 	wireguard-tools jq libnotify
 	nftables e2fsprogs
 	curl unzip"
-PKGS_arch="
-	base-devel git pkgconf meson ninja
-	wayland wayland-protocols libxkbcommon libinput pixman
-	libxcb xcb-util-wm libdrm seatd hwdata libdisplay-info libpulse
-	pango cairo glib2 ncurses
-	fcft
-	zsh zsh-autosuggestions zsh-completions zsh-history-substring-search zsh-syntax-highlighting
-	foot swaybg mako brightnessctl playerctl swaylock
-	grim slurp wl-clipboard wlr-randr imagemagick
-	xdg-desktop-portal xdg-desktop-portal-gtk xdg-desktop-portal-wlr
-	adwaita-icon-theme hicolor-icon-theme papirus-icon-theme
-	sassc
-	xorg-xwayland fontconfig
-	wlsunset impala pulsemixer bluez-utils
-	wireguard-tools jq libnotify
-	nftables e2fsprogs
-	curl unzip"
-PKGS_debian="
-	build-essential git pkg-config meson ninja-build
-	libwayland-dev wayland-protocols libwayland-bin
-	libxkbcommon-dev libinput-dev libpixman-1-dev
-	libxcb1-dev libxcb-icccm4-dev libxcb-render-util0-dev libxcb-ewmh-dev libxcb-res0-dev
-	libxcb-composite0-dev libxcb-xfixes0-dev libxcb-render0-dev
-	libdrm-dev libseat-dev libudev-dev libgbm-dev libegl1-mesa-dev libgles2-mesa-dev
-	libdisplay-info-dev hwdata libpulse-dev
-	libpango1.0-dev libcairo2-dev libglib2.0-dev libncursesw5-dev
-	libfcft-dev
-	zsh zsh-autosuggestions zsh-syntax-highlighting
-	foot swaybg mako-notifier brightnessctl playerctl swaylock
-	grim slurp wl-clipboard wlr-randr imagemagick
-	xdg-desktop-portal xdg-desktop-portal-gtk xdg-desktop-portal-wlr xwayland
-	adwaita-icon-theme hicolor-icon-theme papirus-icon-theme
-	sassc
-	wlsunset pulsemixer bluez
-	wireguard-tools jq libnotify-bin
-	nftables e2fsprogs
-	fontconfig curl unzip ca-certificates"
 PIPEWIRE_void="pipewire wireplumber"
-PIPEWIRE_arch="pipewire pipewire-pulse wireplumber"
-PIPEWIRE_debian="pipewire pipewire-pulse wireplumber"
 
 install_deps() {
-	eval "pkgs=\$PKGS_$DISTRO"
-	have_pipewire || eval "pkgs=\"\$pkgs \$PIPEWIRE_$DISTRO\""
-	# Append per-host extras (hosts/<host>/pkgs.<distro>), if present.
-	host_pkgs_file="$SRC/hosts/$HOST/pkgs.$DISTRO"
+	pkgs=$PKGS_void
+	have_pipewire || pkgs="$pkgs $PIPEWIRE_void"
+	# Append per-host extras (hosts/<host>/pkgs.void), if present.
+	host_pkgs_file="$SRC/hosts/$HOST/pkgs.void"
 	if [ -f "$host_pkgs_file" ]; then
 		host_pkgs=$(grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$host_pkgs_file" | tr '\n' ' ')
 		[ -n "$host_pkgs" ] && pkgs="$pkgs $host_pkgs"
 	fi
-	case "$DISTRO" in
-		void)
-			# librewolf isn't in Void's official repos. If it's in the
-			# package list, drop the index-0/librewolf-void community
-			# repo into /etc/xbps.d/ before the sync so the next step
-			# can resolve it. Idempotent.
-			case " $pkgs " in
-				*' librewolf '*)
-					if [ ! -f /etc/xbps.d/20-librewolf.conf ]; then
-						say "adding librewolf-void xbps repo (index-0/librewolf-void)"
-						printf 'repository=https://github.com/index-0/librewolf-void/releases/latest/download/\n' \
-							| $SUDO tee /etc/xbps.d/20-librewolf.conf >/dev/null
-					fi ;;
-			esac
-			$SUDO xbps-install -Sy >/dev/null || warn "repo sync failed"
-			missing=
-			for p in $pkgs; do
-				xbps-query -p pkgver "$p" >/dev/null 2>&1 && continue
-				if xbps-query -R "$p" >/dev/null 2>&1; then
-					missing="$missing $p"
-				else
-					warn "void: package '$p' not in repos — skipping"
-				fi
-			done
-			[ -n "$missing" ] && { $SUDO xbps-install -y $missing || die "xbps-install failed"; }
-			$SUDO xbps-install -y wlroots0.19 wlroots0.19-devel 2>/dev/null \
-				|| $SUDO xbps-install -y wlroots-devel 2>/dev/null \
-				|| warn "wlroots not in repos — will build from source" ;;
-		arch)
-			$SUDO pacman -S --needed --noconfirm $pkgs || die "pacman failed"
-			$SUDO pacman -S --needed --noconfirm wlroots0.19 2>/dev/null \
-				|| warn "wlroots0.19 not in repos — will build from source" ;;
-		debian)
-			$SUDO apt-get update
-			$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y \
-				--no-install-recommends $pkgs || die "apt-get failed"
-			if apt-cache show libwlroots-0.19-dev >/dev/null 2>&1; then
-				$SUDO apt-get install -y libwlroots-0.19-dev || true
+	# librewolf isn't in Void's official repos. If it's in the package list,
+	# drop the index-0/librewolf-void community repo before the sync.
+	case " $pkgs " in
+		*' librewolf '*)
+			if [ ! -f /etc/xbps.d/20-librewolf.conf ]; then
+				say "adding librewolf-void xbps repo (index-0/librewolf-void)"
+				printf 'repository=https://github.com/index-0/librewolf-void/releases/latest/download/\n' \
+					| $SUDO tee /etc/xbps.d/20-librewolf.conf >/dev/null
 			fi ;;
 	esac
+	$SUDO xbps-install -Sy >/dev/null || warn "repo sync failed"
+	missing=
+	for p in $pkgs; do
+		xbps-query -p pkgver "$p" >/dev/null 2>&1 && continue
+		if xbps-query -R "$p" >/dev/null 2>&1; then
+			missing="$missing $p"
+		else
+			warn "package '$p' not in repos — skipping"
+		fi
+	done
+	[ -n "$missing" ] && { $SUDO xbps-install -y $missing || die "xbps-install failed"; }
+	$SUDO xbps-install -y wlroots0.19 wlroots0.19-devel 2>/dev/null \
+		|| $SUDO xbps-install -y wlroots-devel 2>/dev/null \
+		|| warn "wlroots not in repos — will build from source"
 }
 
 # ---- wlroots 0.19 fallback ----
@@ -268,27 +212,6 @@ ensure_wlroots() {
 	$SUDO ldconfig
 	export PKG_CONFIG_PATH="$WLR_PREFIX/lib/pkgconfig:$WLR_PREFIX/lib64/pkgconfig:$WLR_PREFIX/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH:-}"
 	pkg-config --exists wlroots-0.19 || die "wlroots built but pkg-config can't find it"
-}
-
-# ---- dmenu-wayland (no upstream package; two patches required) ----
-install_dmenu_wl() {
-	have dmenu-wl && { say "dmenu-wl already installed"; return; }
-	say "building dmenu-wayland"
-	tmp=$(mktemp -d)
-	git clone --depth=1 https://github.com/nyyManni/dmenu-wayland.git \
-		"$tmp/dmenu-wayland"
-	(
-		cd "$tmp/dmenu-wayland"
-		# overlap dwlb instead of stacking under it
-		sed -i 's|zwlr_layer_surface_v1_set_anchor(panel->surface.layer_surface,|zwlr_layer_surface_v1_set_exclusive_zone(panel->surface.layer_surface, -1);\n\tzwlr_layer_surface_v1_set_anchor(panel->surface.layer_surface,|' draw.c
-		# keep selection visible past visible width
-		sed -i 's|for (item = matches; item; item = item->right) {$|for (item = sel ? sel : matches; item; item = item->right) {|' dmenu.c
-		sed -i 's|if (leftmost != matches) {|if (sel \&\& sel != matches) {|' dmenu.c
-		meson setup build --buildtype=release
-		ninja -C build
-		$SUDO ninja -C build install
-	)
-	have dmenu-wl || die "dmenu-wl built but not on PATH"
 }
 
 # ---- wayfreeze (Wayland screen-freeze for screenshot-area) ----
@@ -432,28 +355,30 @@ build_install() {
 }
 build_all() {
 	build_install "$SUDO" dwl             "$SRC/dwl"             /usr/bin/dwl                       /usr
-	build_install "$SUDO" dwlb            "$SRC/dwlb"            /usr/bin/dwlb                      /usr
-	build_install ""      dwlb-status     "$SRC/dwlb-status"     "$HOME/.local/bin/dwlb-status"     "$HOME/.local"
-	build_install ""      dwlb-leftstatus "$SRC/dwlb-leftstatus" "$HOME/.local/bin/dwlb-leftstatus" "$HOME/.local"
-	build_install ""      ws-hud          "$SRC/ws-hud"          "$HOME/.local/bin/ws-hud"          "$HOME/.local"
+	# twl ships two binaries; build_install only checks the first. Install the
+	# whole target tree so both twl and twlctl land in ~/.local/bin.
+	say "building twl"
+	[ "${FORCE:-0}" = 1 ] && make -C "$SRC/twl" distclean >/dev/null 2>&1 || true
+	make -C "$SRC/twl"
+	make -C "$SRC/twl" PREFIX="$HOME/.local" install
 	build_install "$SUDO" mullvad-menu    "$SRC/mullvad-menu"    /usr/local/bin/mullvad-menu        /usr/local
 }
 
 # ---- scripts (single source of truth, used by full install AND --rebuild) ----
-SCRIPTS="dwl-autostart dwl-wallpaper dwl-autolayout dwl-watch-outputs screenshot-area dwl-osd ws-hud-lidlock"
-# Themed (dmenu colors substituted from the active theme — see apply_theme).
-THEMED_SCRIPTS="dmenu-launcher ws-pomodoro ws-powermenu"
+SCRIPTS="dwl-autostart dwl-autolayout dwl-launcher screenshot-area"
+# Plain copies (no template substitution — twlctl menu is the only menu now,
+# and twl owns its own colors via twl/config.h).
+PLAIN_IN_SCRIPTS="ws-pomodoro"
 install_scripts() {
 	mkdir -p "$HOME/.local/bin"
 	for s in $SCRIPTS; do
 		install_if_changed "" 755 "$SRC/scripts/$s" "$HOME/.local/bin/$s"
 	done
-	for s in $THEMED_SCRIPTS; do
-		install_template "" 755 "$SRC/scripts/$s.in" "$HOME/.local/bin/$s" \
-			-e "s|@D_NB@|$D_NB|g" -e "s|@D_NF@|$D_NF|g" \
-			-e "s|@D_SB@|$D_SB|g" -e "s|@D_SF@|$D_SF|g"
+	for s in $PLAIN_IN_SCRIPTS; do
+		install_if_changed "" 755 "$SRC/scripts/$s.in" "$HOME/.local/bin/$s"
 	done
 	rm -f "$HOME/.local/bin/bemenu-desktop"  # legacy launcher
+	rm -f "$HOME/.local/bin/dmenu-launcher" "$HOME/.local/bin/ws-hud-lidlock"  # replaced by twl
 	# /usr/bin so ly's PATH (which lists /usr/bin before /usr/local/bin) picks
 	# up the dbus-wrapping launcher.
 	install_if_changed "$SUDO" 755 "$SRC/scripts/dwlarp"         /usr/bin/dwlarp
@@ -516,11 +441,12 @@ read_num() { awk -v k="$1" '$1=="#define" && $2==k { print $3; exit }' "$SRC/con
 seed_configs() {
 	cfg="${XDG_CONFIG_HOME:-$HOME/.config}"
 	[ -f "$cfg/dwl/layout"    ] || { mkdir -p "$cfg/dwl"; echo above > "$cfg/dwl/layout"; }
-	# foot.ini + mako/config are rendered from the active theme's vars
-	# (sourced at apply-theme time, top of install.sh). install_template
-	# only rewrites the dst when the rendered output differs, so this is
-	# a no-op when the user re-runs the same theme.
-	mkdir -p "$cfg/foot" "$cfg/mako"
+	# foot.ini is rendered from the active theme's vars. twl colors live in
+	# twl/config.h (compiled in), so there is no per-theme mako/dmenu config
+	# left to render. install_template only rewrites the dst when the
+	# rendered output differs, so this is a no-op when the user re-runs the
+	# same theme.
+	mkdir -p "$cfg/foot"
 	install_template "" 644 "$SRC/assets/foot.ini.in" "$cfg/foot/foot.ini" \
 		-e "s|@T_ALPHA@|$T_ALPHA|g" \
 		-e "s|@T_BG@|$T_BG|g"       -e "s|@T_FG@|$T_FG|g" \
@@ -529,28 +455,15 @@ seed_configs() {
 		-e "s|@T_R4@|$T_R4|g" -e "s|@T_R5@|$T_R5|g" -e "s|@T_R6@|$T_R6|g" -e "s|@T_R7@|$T_R7|g" \
 		-e "s|@T_B0@|$T_B0|g" -e "s|@T_B1@|$T_B1|g" -e "s|@T_B2@|$T_B2|g" -e "s|@T_B3@|$T_B3|g" \
 		-e "s|@T_B4@|$T_B4|g" -e "s|@T_B5@|$T_B5|g" -e "s|@T_B6@|$T_B6|g" -e "s|@T_B7@|$T_B7|g"
-	install_template "" 644 "$SRC/assets/mako.config.in" "$cfg/mako/config" \
-		-e "s|@M_BG@|$M_BG|g"             -e "s|@M_FG@|$M_FG|g" \
-		-e "s|@M_BORDER@|$M_BORDER|g"     -e "s|@M_PROG@|$M_PROG|g" \
-		-e "s|@M_LOW@|$M_LOW|g"           -e "s|@M_CRIT@|$M_CRIT|g" \
-		-e "s|@M_MUTE_BG@|$M_MUTE_BG|g"   -e "s|@M_MUTE_BORDER@|$M_MUTE_BORDER|g" \
-		-e "s|@M_MUTE_FG@|$M_MUTE_FG|g"
+	rm -rf "$cfg/mako"
 
 	# xdg-desktop-portal: tell it to route FileChooser/AppChooser/Settings to
 	# the gtk backend (file pickers) and screencast/screenshot to wlr.
 	$SUDO install -Dm644 "$SRC/assets/dwl-portals.conf" \
 		/usr/share/xdg-desktop-portal/dwl-portals.conf
 
-	if [ ! -f "$cfg/swaylock/config" ]; then
-		mkdir -p "$cfg/swaylock"
-		sed -e "s|@WS_LOCK_SCREEN_HEX@|$(read_str WS_LOCK_SCREEN_HEX)|g" \
-		    -e "s|@WS_LOCK_RING_HEX@|$(read_str WS_LOCK_RING_HEX)|g"     \
-		    -e "s|@WS_LOCK_TEXT_HEX@|$(read_str WS_LOCK_TEXT_HEX)|g"     \
-		    -e "s|@WS_LOCK_WRONG_HEX@|$(read_str WS_LOCK_WRONG_HEX)|g"   \
-		    -e "s|@WS_LOCK_FONT@|$(read_str WS_LOCK_FONT)|g"             \
-		    -e "s|@WS_LOCK_FONT_SIZE@|$(read_num WS_LOCK_FONT_SIZE)|g"   \
-		    "$SRC/assets/swaylock.config.in" > "$cfg/swaylock/config"
-	fi
+	# swaylock retired — twl owns session lock via ext_session_lock_v1.
+	rm -rf "$cfg/swaylock"
 
 	wall=$(read_str WS_WALLPAPER); [ -z "$wall" ] && wall=assets/wallpaper.png
 	case "$wall" in /*) ;; *) wall="$SRC/$wall" ;; esac
@@ -657,31 +570,20 @@ ly_enable() {
 		[ -n "$u" ] && printf 'user=%s\nsession_index=0\n' "$u" \
 			| $SUDO tee /etc/ly/save.ini >/dev/null
 	fi
-	case "$DISTRO" in
-		arch)   $SUDO systemctl enable ly ;;
-		debian) have systemctl && $SUDO systemctl enable ly || true ;;
-		void)   [ -L /var/service/ly ] || $SUDO ln -s /etc/sv/ly /var/service/ly ;;
-	esac
+	[ -L /var/service/ly ] || $SUDO ln -s /etc/sv/ly /var/service/ly
 	say "ly enabled — reboot to take effect"
 }
 
 ly_build_from_source() {
-	# Void/Debian don't package ly; build it via zig.
-	case "$DISTRO" in
-		void)   $SUDO xbps-install -Sy zig pam-devel libxcb-devel >/dev/null 2>&1 || true ;;
-		debian) $SUDO apt-get install -y --no-install-recommends zig libpam0g-dev libxcb1-dev 2>/dev/null || true ;;
-	esac
-	have zig || { warn "ly: zig unavailable on $DISTRO — skipping"; return 1; }
+	$SUDO xbps-install -Sy zig pam-devel libxcb-devel >/dev/null 2>&1 || true
+	have zig || { warn "ly: zig unavailable — skipping"; return 1; }
 	tmp=$(mktemp -d)
 	git clone --depth=1 https://github.com/fairyglade/ly.git "$tmp/ly" \
 		|| { warn "ly: clone failed"; return 1; }
 	(
 		cd "$tmp/ly"
 		zig build
-		case "$DISTRO" in
-			void) $SUDO zig build installexe -Dinit_system=runit ;;
-			*)    $SUDO zig build installexe -Dinit_system=systemd ;;
-		esac
+		$SUDO zig build installexe -Dinit_system=runit
 	) || { warn "ly: build failed (zig version mismatch?)"; return 1; }
 }
 
@@ -714,7 +616,24 @@ ensure_session_manager() {
 
 set_default_shell() {
 	have zsh || { warn "zsh missing — skipping default-shell change"; return 0; }
-	zsh_path=$(command -v zsh)
+	# pam_shells does a literal string match against /etc/shells (no symlink
+	# resolution), so the path we hand to chsh MUST appear verbatim there or
+	# login/ly/swaylock will reject the user. command -v can return /sbin/zsh
+	# on Void (where /sbin → usr/bin), which is typically absent from /etc/shells.
+	zsh_path=
+	for cand in /bin/zsh /usr/bin/zsh "$(command -v zsh)"; do
+		[ -x "$cand" ] || continue
+		if grep -qxF "$cand" /etc/shells 2>/dev/null; then
+			zsh_path=$cand
+			break
+		fi
+		[ -z "$zsh_path" ] && zsh_path=$cand
+	done
+	[ -n "$zsh_path" ] || { warn "no usable zsh path found"; return 0; }
+	if ! grep -qxF "$zsh_path" /etc/shells 2>/dev/null; then
+		say "adding $zsh_path to /etc/shells"
+		echo "$zsh_path" | $SUDO tee -a /etc/shells >/dev/null
+	fi
 	current=$(getent passwd "$USER" 2>/dev/null | cut -d: -f7)
 	[ "$current" = "$zsh_path" ] && return 0
 	say "setting login shell to $zsh_path for $USER (current: $current)"
@@ -770,10 +689,7 @@ EOF
 
 install_ly() {
 	have ly && { say "ly already installed"; ly_enable; return; }
-	case "$DISTRO" in
-		arch) $SUDO pacman -S --needed --noconfirm ly 2>/dev/null && have ly && { ly_enable; return; } ;;
-		void) $SUDO xbps-install -Sy ly 2>/dev/null && have ly && { ly_enable; return; } ;;
-	esac
+	$SUDO xbps-install -Sy ly 2>/dev/null && have ly && { ly_enable; return; }
 	say "building ly from source"
 	ly_build_from_source && ly_enable
 }
@@ -791,11 +707,10 @@ if [ "$REBUILD" -eq 1 ]; then
 	exit 0
 fi
 
-say "dwlarp installer — $DISTRO"
+say "dwlarp installer — Void Linux"
 [ "$SKIP_DEPS" -eq 0 ] && { say "installing distro packages"; install_deps; }
 say "ensuring wlroots 0.19"; ensure_wlroots
 export PKG_CONFIG_PATH="$WLR_PREFIX/lib/pkgconfig:$WLR_PREFIX/lib64/pkgconfig:$WLR_PREFIX/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH:-}"
-install_dmenu_wl
 build_all
 say "ensuring GTK/icon/cursor themes"; ensure_themes; apply_papirus_color
 install_wayfreeze
@@ -819,8 +734,6 @@ esac
 
 say "done — pick 'dwlarp' at the greeter (or run dwlarp from a TTY)"
 say "rebuild after editing config.h:  ./install.sh --rebuild"
-if [ "$DISTRO" = void ]; then
-	say "mullvad: bootstrap once with  sudo mullvad-wg-setup <ACCOUNT>"
-	say "mullvad: runit services (mullvad-watchdog, nftables-mullvad) start automatically within 5s"
-	say "mullvad: check killswitch  sudo mullvad-vpn killswitch status   (default ON; toggle off for captive portals)"
-fi
+say "mullvad: bootstrap once with  sudo mullvad-wg-setup <ACCOUNT>"
+say "mullvad: runit services (mullvad-watchdog, nftables-mullvad) start automatically within 5s"
+say "mullvad: check killswitch  sudo mullvad-vpn killswitch status   (default ON; toggle off for captive portals)"

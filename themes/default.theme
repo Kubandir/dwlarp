@@ -52,22 +52,5 @@ T_R4=a8c8f0;  T_R5=d9b0f0;  T_R6=a8e6e0;  T_R7=d8dce4
 T_B0=5c5c70;  T_B1=ffc4cc;  T_B2=c4f0d0;  T_B3=ffe6c4
 T_B4=c4dcff;  T_B5=eccaff;  T_B6=c4f0ec;  T_B7=f0f4fa
 
-# ---- mako notifications ("#rrggbb[aa]") ---------------------------
-M_BG=#0d1418f0
-M_FG=#c8e8f0
-M_BORDER=#3a7268
-M_PROG=#1a3630
-M_LOW=#1e3a3a
-M_CRIT=#ffffff
-M_MUTE_BG=#3a1418f0
-M_MUTE_BORDER=#a04050
-M_MUTE_FG=#f0c8c8
-
-# ---- dmenu / launchers ("#rrggbb", no alpha — dmenu can't do it) --
-D_NB=#000000
-D_NF=#ffffff
-D_SB=#2a2f3a
-D_SF=#ffffff
-
 # ---- wallpaper (path; relative to repo root or absolute) ----------
 WALLPAPER=assets/wallpaper.png

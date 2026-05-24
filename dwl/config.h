@@ -188,12 +188,14 @@ static const Key keys[] = {
 	{ 0, XKB_KEY_XF86AudioLowerVolume,  spawn, SHCMD(WS_OSD_CMD " volume down") },
 	{ 0, XKB_KEY_XF86AudioMute,         spawn, SHCMD(WS_OSD_CMD " volume mute") },
 	{ 0, XKB_KEY_XF86AudioMicMute,      spawn, SHCMD(WS_OSD_CMD " mic mute") },
-	{ 0, XKB_KEY_XF86MonBrightnessUp,   spawn, SHCMD(WS_OSD_CMD " brightness up") },
-	{ 0, XKB_KEY_XF86MonBrightnessDown, spawn, SHCMD(WS_OSD_CMD " brightness down") },
-	{ 0, XKB_KEY_XF86AudioPlay,  spawn, SHCMD("playerctl play-pause") },
-	{ 0, XKB_KEY_XF86AudioPause, spawn, SHCMD("playerctl play-pause") },
-	{ 0, XKB_KEY_XF86AudioNext,  spawn, SHCMD("playerctl next") },
-	{ 0, XKB_KEY_XF86AudioPrev,  spawn, SHCMD("playerctl previous") },
+	{ 0, XKB_KEY_XF86MonBrightnessUp,   spawn, SHCMD(WS_OSD_CMD " backlight up") },
+	{ 0, XKB_KEY_XF86MonBrightnessDown, spawn, SHCMD(WS_OSD_CMD " backlight down") },
+	/* MPRIS media keys via raw dbus-send (no playerctl). Targets kew by
+	 * fixed bus name; extend the dest if you use a different player. */
+	{ 0, XKB_KEY_XF86AudioPlay,  spawn, SHCMD("dbus-send --session --type=method_call --dest=org.mpris.MediaPlayer2.kew /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player.PlayPause") },
+	{ 0, XKB_KEY_XF86AudioPause, spawn, SHCMD("dbus-send --session --type=method_call --dest=org.mpris.MediaPlayer2.kew /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player.PlayPause") },
+	{ 0, XKB_KEY_XF86AudioNext,  spawn, SHCMD("dbus-send --session --type=method_call --dest=org.mpris.MediaPlayer2.kew /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player.Next") },
+	{ 0, XKB_KEY_XF86AudioPrev,  spawn, SHCMD("dbus-send --session --type=method_call --dest=org.mpris.MediaPlayer2.kew /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player.Previous") },
 
 	/* VT switching — essential to avoid lockout */
 	{ WLR_MODIFIER_CTRL|WLR_MODIFIER_ALT, XKB_KEY_Terminate_Server, quit, {0} },

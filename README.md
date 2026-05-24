@@ -1,8 +1,8 @@
 # dwlarp
 
-dwl 0.8 (with btrtile BSP) + dwlb + minimal status feeders. One installer for
-Void, Arch, and Debian/Ubuntu — including default Debian + GNOME, where it
-detects the existing PipeWire stack and leaves it alone.
+dwl 0.8 (Wayland, suckless) + **twl** — a single C daemon that replaces the
+entire old widget stack (bar + status + HUD + OSD + menu + D-Bus notifications).
+One installer for **Void Linux**. Statically configured at compile time.
 
 ## Install
 
@@ -18,68 +18,69 @@ cd dwlarp
 ./install.sh
 ```
 
-After it finishes, log out, pick **dwlarp** at the display manager, log in.
+After it finishes, log out and pick **dwlarp** at the display manager (or reboot
+to TTY1 if you skipped ly).
 
 ## Flags
 
-| Flag                 | Effect                                               |
-| -------------------- | ---------------------------------------------------- |
-| `--rebuild` / `-r`   | Rebuild C projects + reinstall scripts. Nothing else.|
-| `--skip-deps` / `-d` | Don't touch distro packages.                         |
-| `-y`                 | Non-interactive.                                     |
-| `-h`                 | Help.                                                |
-
-Optional env vars:
-
-- `WITH_LY=1` — install + enable the [ly](https://github.com/fairyglade/ly) greeter (Arch/Void only).
+| Flag                 | Effect                                                   |
+| -------------------- | -------------------------------------------------------- |
+| `--rebuild` / `-r`   | Rebuild C projects + reinstall scripts/configs. No more. |
+| `--skip-deps` / `-d` | Skip xbps package installs.                              |
+| `-t NAME`            | Switch theme and rebuild (`-t list` to see options).     |
+| `-h`                 | Help.                                                    |
 
 ## What it installs
 
-| Path                                          | What                                |
-| --------------------------------------------- | ----------------------------------- |
-| `/usr/bin/dwl`                                | compositor                          |
-| `/usr/bin/dwlb`                               | bar                                 |
-| `/usr/bin/dwlarp`                             | session entrypoint (used by `Exec=`)|
-| `/usr/share/wayland-sessions/dwlarp.desktop`  | greeter entry                       |
-| `~/.local/bin/dwl-autostart`                  | per-session autostart               |
-| `~/.local/bin/dwlb-status` / `dwlb-leftstatus`| status feeders                      |
-| `~/.local/bin/screenshot-area`                | grim+slurp helper                   |
-| `~/.local/share/dwl/wallpaper.png`            | shipped wallpaper                   |
+| Path                                         | What                                 |
+| -------------------------------------------- | ------------------------------------ |
+| `/usr/bin/dwl`                               | compositor                           |
+| `~/.local/bin/twl`                           | widget daemon (bar/HUD/OSD/menu/notif)|
+| `~/.local/bin/twlctl`                        | twl control socket client            |
+| `/usr/bin/dwlarp`                            | session entrypoint (`Exec=` in .desktop) |
+| `/usr/share/wayland-sessions/dwlarp.desktop` | greeter entry                        |
+| `~/.local/bin/dwl-autostart`                 | per-session autostart                |
+| `~/.local/bin/screenshot-area`               | grim+slurp helper                    |
+| `~/.local/share/dwl/wallpaper.png`           | shipped wallpaper                    |
 
-A web browser is **not** installed — the `Win+S` keybind launches whatever
-`WS_BROWSER_CMD` is set to in `config.h` (default: `librewolf`). Edit it to
-`firefox` or `chromium` if you prefer, then `./install.sh --rebuild`.
-
-## wlroots
-
-dwl 0.8 needs **wlroots 0.19**. The installer:
-
-1. Tries the distro package (`wlroots0.19` on Arch/Void, `libwlroots-0.19-dev`
-   on Debian sid).
-2. If unavailable (e.g. Debian trixie ships 0.18), builds wlroots 0.19 from
-   `gitlab.freedesktop.org/wlroots` into `/usr/local`.
-
-## PipeWire
-
-If PipeWire is already running (default on modern Debian/Ubuntu/Fedora GNOME),
-the installer will not install or restart audio packages. `dwl-autostart` only
-launches PipeWire if nothing is running and the binaries exist.
+A browser is **not** installed — `WS_BROWSER_CMD` in `hosts/<host>/config.h`
+controls what `Win+S` launches (default: `librewolf`).
 
 ## Configuration
 
-Edit `config.h` at the repo root and re-run `./install.sh --rebuild`. dwl is
-statically configured at compile time — that's the suckless way.
+Two config files, never runtime:
+
+- **`hosts/<host>/config.h`** — compositor knobs: colors, fonts, keybinds, app
+  commands, lock, mullvad cadences (`WS_*` macros).
+- **`twl/config.h`** — widget knobs: bar/HUD/OSD/menu colors, sizes, HUD button
+  table, status cadences.
+
+Edit either, then:
+
+```sh
+./install.sh --rebuild
+```
+
+The installer copies `hosts/$(hostname -s)/config.h` to the repo root (gitignored)
+and rebuilds dwl + twl + mullvad-menu. Override the host with `DWLARP_HOST=name`.
+
+## wlroots
+
+dwl 0.8 requires **wlroots 0.19**. The installer tries `xbps-install wlroots0.19`
+first; if unavailable it builds from source into `/usr/local`.
 
 ## Layout
 
 ```
 install.sh
-config.h              # single user-facing config; everything reads from here
-dwl/                  # dwl 0.8 + btrtile + dwl-ipc-unstable-v2
-dwlb/                 # bar with IPC + leftstatus extension
-dwlb-status/          # libpulse-driven status feeder (1s tick, idle ~0% CPU)
-dwlb-leftstatus/      # logo + clock, minute-aligned via timerfd
-scripts/              # dwlarp, dwl-autostart, dwl-osd, dmenu-launcher, …
-desktop/              # dwlarp.desktop
-assets/               # wallpaper, foot/mako/swaylock/ly templates
+hosts/
+  <host>/config.h        # per-host compositor config (single source of truth)
+  <host>/pkgs.void       # optional extra xbps packages
+dwl/                     # dwl 0.8 + btrtile + dwl-ipc-unstable-v2
+twl/                     # widget daemon (bar, HUD, OSD, menu, notifications)
+mullvad-menu/            # wireguard relay picker
+scripts/                 # dwlarp, dwl-autostart, dwl-osd, ws-pomodoro, …
+desktop/                 # dwlarp.desktop
+assets/                  # wallpaper, foot/ly/gtk templates, runit sv files
+themes/                  # *.theme color overlays
 ```

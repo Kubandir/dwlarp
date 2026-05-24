@@ -8,11 +8,11 @@
 
 # Compiled binaries
 dwl/dwl
-dwlb/dwlb
-dwlb-status/dwlb-status
-dwlb-leftstatus/dwlb-leftstatus
 
 # Editor / cache
 .ccls-cache/
 *.swp
 *~
+
+# Claude
+CLAUDE.md

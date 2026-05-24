@@ -303,14 +303,14 @@
 /* Terminal app_ids whose GUI children take their tile slot (window swallowing).
  * Substring match against app_id — "foot" matches both foot and footclient. */
 #define WS_SWALLOW_APPIDS "foot"
-#define WS_LAUNCHER_CMD   "dmenu-launcher"
+#define WS_LAUNCHER_CMD   "dwl-launcher"
 #define WS_BROWSER_CMD    "librewolf"
 #define WS_EDITOR_CMD     "code"
-#define WS_LOCK_CMD       "swaylock"
+#define WS_LOCK_CMD       "twlctl lock"
 #define WS_SCREENSHOT_CMD "$HOME/.local/bin/screenshot-area"
-#define WS_OSD_CMD        "$HOME/.local/bin/dwl-osd"   /* volume/brightness/mic OSD */
+#define WS_OSD_CMD        "twlctl"   /* twl owns volume/brightness/mic — args: volume {up|down|mute} / mic mute / backlight {up|down} */
 #define WS_POMODORO_CMD   "$HOME/.local/bin/ws-pomodoro" /* pomodoro timer + kew music */
-#define WS_POWERMENU_CMD  "$HOME/.local/bin/ws-powermenu" /* poweroff/reboot/hibernate/logout */
+#define WS_POWERMENU_CMD  "twlctl powermenu" /* built-in: poweroff/reboot/hibernate/logout (twl/config.h:POWERMENU_INIT) */
 #define WS_OBSIDIAN_CMD     "obsidian"
 #define WS_FILEMANAGER_CMD  "thunar"
 

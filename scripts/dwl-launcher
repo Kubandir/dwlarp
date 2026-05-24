@@ -1,0 +1,149 @@
+#!/bin/sh
+# dwl-launcher — .desktop app picker over `twlctl menu` (Win + d).
+# Replaces the retired dmenu-launcher (which shelled to dmenu-wl); twl owns
+# the menu surface, font, and colors now, so we just feed it a Name list and
+# act on the reply.
+#
+# Cache: parsed Name<TAB>Exec<TAB>Terminal at $XDG_CACHE_HOME/dwl-launcher/apps,
+# rebuilt synchronously when either applications dir or any *.desktop is
+# newer than the cache. Recent picks float to the top.
+#
+# Terminal=true entries open in $TERMINAL (default foot).
+
+set -eu
+
+TERMINAL="${TERMINAL:-foot}"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/dwl-launcher"
+APPS="$CACHE/apps"
+HISTORY="$CACHE/history"
+
+LOCAL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+SYS_DIR=/usr/share/applications
+
+mkdir -p "$CACHE"
+
+_AWK='
+FNR==1 {
+    if (name!="" && !skip && ex!="") {
+        gsub(/ ?%[a-zA-Z]/, "", ex)
+        printf "%s\t%s\t%s\n", name, ex, term
+    }
+    in_entry=0; name=""; ex=""; term="false"; skip=0
+}
+/^\[Desktop Entry\]/ { in_entry=1; next }
+/^\[/               { in_entry=0; next }
+!in_entry           { next }
+/^Type=/            { if ($0 !~ /=Application/) skip=1 }
+/^NoDisplay=true/   { skip=1 }
+/^OnlyShowIn=/      { skip=1 }
+/^Categories=/ {
+    if ($0 ~ /Screensaver|PackageManager/) skip=1
+}
+/^Name=/ && name==""  { sub(/^Name=/, ""); name=$0 }
+/^Exec=/ && ex==""    { sub(/^Exec=/, ""); ex=$0 }
+/^Terminal=true/      { term="true" }
+END {
+    if (name!="" && !skip && ex!="") {
+        gsub(/ ?%[a-zA-Z]/, "", ex)
+        printf "%s\t%s\t%s\n", name, ex, term
+    }
+}
+'
+
+build() {
+    out=$1
+    tmp=$out.tmp.$$
+
+    hidden=
+    if [ -d "$LOCAL_DIR" ]; then
+        for f in "$LOCAL_DIR"/*.desktop; do
+            [ -f "$f" ] || continue
+            grep -qE "^(NoDisplay=true|OnlyShowIn=)" "$f" 2>/dev/null \
+                && hidden="$hidden $(basename "$f")"
+        done
+    fi
+
+    local_files=
+    [ -d "$LOCAL_DIR" ] && local_files=$(find "$LOCAL_DIR" -maxdepth 1 -name '*.desktop' 2>/dev/null)
+    sys_files=
+    if [ -d "$SYS_DIR" ]; then
+        sys_files=$(find "$SYS_DIR" -maxdepth 1 -name '*.desktop' 2>/dev/null \
+            | while read -r f; do
+                bn=$(basename "$f")
+                case " $hidden " in *" $bn "*) continue ;; esac
+                printf '%s\n' "$f"
+              done)
+    fi
+
+    # shellcheck disable=SC2086
+    printf '%s\n%s\n' "$local_files" "$sys_files" \
+        | awk 'NF' \
+        | xargs -r awk "$_AWK" 2>/dev/null \
+        | sort -t'	' -k1,1 -u > "$tmp" || { rm -f "$tmp"; return 1; }
+
+    if [ -s "$tmp" ]; then
+        mv "$tmp" "$out"
+    else
+        rm -f "$tmp"
+        return 1
+    fi
+}
+
+stale() {
+    [ -f "$APPS" ] || return 0
+    for d in "$LOCAL_DIR" "$SYS_DIR"; do
+        if [ -d "$d" ] && [ "$d" -nt "$APPS" ]; then return 0; fi
+    done
+    if find "$LOCAL_DIR" "$SYS_DIR" -maxdepth 1 -name '*.desktop' \
+            -newer "$APPS" 2>/dev/null | grep -q .; then
+        return 0
+    fi
+    return 1
+}
+
+if [ ! -f "$APPS" ] || stale; then
+    build "$APPS"
+fi
+
+APPDB=$(cat "$APPS")
+
+# History first (most-recently-picked, deduped against APPDB names),
+# then everything else.
+names() {
+    if [ -f "$HISTORY" ]; then
+        printf '%s\n' "$APPDB" | awk -F'\t' \
+            'NR==FNR{h[$0]=1;next} ($1 in h){print $1}' \
+            "$HISTORY" - | head -8
+    fi
+    printf '%s\n' "$APPDB" | awk -F'\t' '{print $1}'
+}
+
+# twl caps menu at MAX_ITEMS=256. Truncate to fit and feed via xargs so
+# we don't need to expand into argv directly (each entry's name is bounded
+# but xargs is the conservative path for arbitrary user .desktop files).
+LIST=$(names | awk '!seen[$0]++' | head -256)
+[ -n "$LIST" ] || exit 0
+
+# Build the twlctl argv: 'menu' 'run:' item1 item2 ...
+reply=$(printf '%s\n' "$LIST" | xargs -d '\n' twlctl menu 'run:') || exit 0
+
+idx=${reply%%	*}
+selection=${reply#*	}
+[ "$idx" -lt 0 ] 2>/dev/null && exit 0
+[ -z "$selection" ] && exit 0
+
+entry=$(printf '%s\n' "$APPDB" | awk -F'\t' -v s="$selection" '$1==s{print;exit}')
+exec_cmd=$(printf '%s\n' "$entry" | cut -f2)
+is_term=$(printf '%s\n' "$entry" | cut -f3)
+[ -z "$exec_cmd" ] && exit 1
+
+{
+    printf '%s\n' "$selection"
+    [ -f "$HISTORY" ] && grep -Fxv "$selection" "$HISTORY" || true
+} | head -20 > "$HISTORY.tmp" && mv "$HISTORY.tmp" "$HISTORY"
+
+if [ "$is_term" = "true" ]; then
+    setsid "$TERMINAL" -e sh -c "$exec_cmd" &
+else
+    setsid sh -c "$exec_cmd" &
+fi
