@@ -188,6 +188,8 @@ install_deps() {
 	$SUDO xbps-install -y wlroots0.19 wlroots0.19-devel 2>/dev/null \
 		|| $SUDO xbps-install -y wlroots-devel 2>/dev/null \
 		|| warn "wlroots not in repos — will build from source"
+	$SUDO xbps-install -y scenefx scenefx-devel 2>/dev/null \
+		|| warn "scenefx not in repos — will build from source"
 }
 
 # ---- wlroots 0.19 fallback ----
@@ -211,6 +213,27 @@ ensure_wlroots() {
 	$SUDO ldconfig
 	export PKG_CONFIG_PATH="$WLR_PREFIX/lib/pkgconfig:$WLR_PREFIX/lib64/pkgconfig:$WLR_PREFIX/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH:-}"
 	pkg-config --exists wlroots-0.19 || die "wlroots built but pkg-config can't find it"
+}
+
+# ---- scenefx 0.4 fallback (rounded corners / scene effects) ----
+ensure_scenefx() {
+	if pkg-config --exists scenefx-0.4; then
+		say "scenefx found ($(pkg-config --modversion scenefx-0.4))"
+		return
+	fi
+	say "building scenefx 0.4 from source"
+	tmp=$(mktemp -d)
+	git clone --depth=1 --branch 0.4.1 \
+		https://github.com/wlrfx/scenefx.git "$tmp/scenefx"
+	(
+		cd "$tmp/scenefx"
+		meson setup build --prefix="$WLR_PREFIX" --buildtype=release -Dexamples=false
+		ninja -C build
+		$SUDO ninja -C build install
+	)
+	$SUDO ldconfig
+	export PKG_CONFIG_PATH="$WLR_PREFIX/lib/pkgconfig:$WLR_PREFIX/lib64/pkgconfig:$WLR_PREFIX/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH:-}"
+	pkg-config --exists scenefx-0.4 || die "scenefx built but pkg-config can't find it"
 }
 
 # ---- wayfreeze (Wayland screen-freeze for screenshot-area) ----
@@ -494,14 +517,16 @@ seed_configs() {
 	    -e "s|@WS_CURSOR_SIZE@|$cursor_size|g"   \
 	    "$SRC/assets/dwlarp.env.in" > "$cfg/dwlarp/env"
 
-	# GPU-specific env. WS_GPU=nvidia → wlroots needs the vulkan renderer
-	# (gles2 has black-screen + cursor-disappear bugs on the proprietary
-	# driver) and SW cursors; VA-API/GBM/GLX are pointed at the proprietary
-	# stack so browsers/players pick the right ICD.
+	# GPU-specific env. WS_GPU=nvidia → SW cursors; VA-API/GBM/GLX are pointed
+	# at the proprietary stack so browsers/players pick the right ICD.
+	# NOTE: dwl now uses SceneFX's GLES2 fx_renderer (for rounded corners), so
+	# WLR_RENDERER is ignored — the old vulkan workaround no longer applies.
+	# GLES2 historically black-screened on the proprietary driver; if that
+	# recurs, set WS_BORDER_RADIUS=0 in this host's config.h and revert dwl's
+	# fx_renderer_create back to wlr_renderer_autocreate.
 	case "$(read_str WS_GPU)" in
 		nvidia) cat >> "$cfg/dwlarp/env" <<'EOF'
 
-export WLR_RENDERER=vulkan
 export WLR_NO_HARDWARE_CURSORS=1
 export LIBVA_DRIVER_NAME=nvidia
 export GBM_BACKEND=nvidia-drm
@@ -693,6 +718,7 @@ fi
 say "dwlarp installer — Void Linux"
 [ "$SKIP_DEPS" -eq 0 ] && { say "installing distro packages"; install_deps; }
 say "ensuring wlroots 0.19"; ensure_wlroots
+say "ensuring scenefx 0.4"; ensure_scenefx
 export PKG_CONFIG_PATH="$WLR_PREFIX/lib/pkgconfig:$WLR_PREFIX/lib64/pkgconfig:$WLR_PREFIX/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH:-}"
 build_all
 say "ensuring GTK/icon/cursor themes"; ensure_themes; apply_papirus_color

@@ -21,6 +21,9 @@
 static const int sloppyfocus               = WS_SLOPPY_FOCUS;
 static const int bypass_surface_visibility = 0;
 static const unsigned int borderpx         = WS_BORDER_PX;
+static const int border_radius             = WS_BORDER_RADIUS;
+static const float shadow_sigma            = WS_SHADOW_SIGMA;
+static const float shadowcolor[]           = {0.0f, 0.0f, 0.0f, WS_SHADOW_ALPHA};
 static const unsigned int gappx            = WS_GAP_PX;
 static const float rootcolor[]             = COLOR(WS_BG);
 static const float bordercolor[]           = COLOR(WS_BORDER);
@@ -40,12 +43,6 @@ enum Direction { DIR_LEFT, DIR_RIGHT, DIR_UP, DIR_DOWN };
 
 /* logging */
 static int log_level = WLR_ERROR;
-
-/* app_ids that act as "swallower" terminals — when a GUI app maps and any
- * ancestor in its PPid chain is a managed client whose app_id contains one
- * of these substrings, the new GUI takes the terminal's tile slot and the
- * terminal hides until the GUI exits. */
-static const char *swallowappids[] = { WS_SWALLOW_APPIDS };
 
 static const Rule rules[] = {
 	/* app_id                     title  tags mask  isfloating  monitor */

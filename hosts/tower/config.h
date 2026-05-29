@@ -76,6 +76,9 @@
  * ------------------------------------------------------------ */
 #define WS_SLOPPY_FOCUS    1       /* 1 = focus follows mouse */
 #define WS_BORDER_PX       2       /* window border thickness (pixels) */
+#define WS_BORDER_RADIUS   10      /* window corner radius (px, 0 = square) */
+#define WS_SHADOW_SIGMA    10.0f   /* shadow blur radius (px) */
+#define WS_SHADOW_ALPHA    0.40f   /* shadow opacity (0.0–1.0) */
 #define WS_GAP_PX          6       /* gap between tiled windows (pixels) */
 #define WS_MFACT           0.55f   /* default master/stack split [0.05..0.95] */
 
@@ -295,9 +298,6 @@
  * APP COMMANDS
  * ------------------------------------------------------------ */
 #define WS_TERM_CMD       "foot"
-/* Terminal app_ids whose GUI children take their tile slot (window swallowing).
- * Substring match against app_id — "foot" matches both foot and footclient. */
-#define WS_SWALLOW_APPIDS "foot"
 #define WS_LAUNCHER_CMD   "dwl-launcher"
 #define WS_BROWSER_CMD    "librewolf"
 #define WS_EDITOR_CMD     "code"

@@ -138,26 +138,21 @@ btrtile(Monitor *m)
 	if (!m || !m->root)
 		return;
 
-	/* Remove non tiled clients from tree. Keep fullscreen clients so their
-	 * BSP slot is reserved and the layout isn't reshuffled around them.
-	 * Skip clients hidden by swallowing (`swallowedby` set) — their slot
-	 * is owned by the child that swallowed them, so we must not touch
-	 * the tree on their behalf. */
+	/* Remove non tiled clients from tree. */
 	wl_list_for_each(c, &clients, link) {
-		if (c->mon == m && !c->isfloating && !c->swallowedby) {
-		} else if (!c->swallowedby) {
+		if (c->mon == m && !c->isfloating) {
+		} else {
 			remove_client(m, c);
 		}
 	}
 
-	/* Insert visible clients that are not part of the tree. Hidden parents
-	 * (swallowedby set) stay out — their visible child already occupies
-	 * their slot. The drop target must be (a) not the client we're inserting
-	 * and (b) already in the tree — otherwise insert_client's fallback
-	 * branch hardcodes a vertical root split, which appears as a new column
-	 * regardless of the preview's split direction. */
+	/* Insert visible clients that are not part of the tree. The drop target
+	 * must be (a) not the client we're inserting and (b) already in the
+	 * tree — otherwise insert_client's fallback branch hardcodes a vertical
+	 * root split, which appears as a new column regardless of the preview's
+	 * split direction. */
 	wl_list_for_each(c, &clients, link) {
-		if (VISIBLEON(c, m) && !c->isfloating && c->mon == m && !c->swallowedby) {
+		if (VISIBLEON(c, m) && !c->isfloating && c->mon == m) {
 			found = find_client_node(m->root, c);
 			if (!found) {
 				Client *t, *tc;
@@ -168,7 +163,7 @@ btrtile(Monitor *m)
 					t = NULL;
 					wl_list_for_each(tc, &clients, link) {
 						if (tc != c && tc->mon == m && !tc->isfloating
-						    && !tc->swallowedby && find_client_node(m->root, tc)) {
+						    && find_client_node(m->root, tc)) {
 							t = tc;
 							break;
 						}
@@ -667,8 +662,17 @@ xytoclient(double x, double y) {
 	Client *c, *closest = NULL;
 	double dist, mindist = INT_MAX, dx, dy;
 
+	/* Skip the window currently being mouse-dragged. On release it is
+	 * un-floated (isfloating=0) before the re-tile arrange, so without this
+	 * its drag geometry — still parked under the cursor — would let it match
+	 * itself here. The insert loop then hits its `t == c` guard and falls
+	 * back to focustop(), dropping the window somewhere other than the spot
+	 * the move-preview showed (the preview ran while it was still floating,
+	 * so it was excluded then). Excluding grabc keeps preview and insert in
+	 * sync. grabc is NULL outside an active grab, so normal arranges are
+	 * unaffected. */
 	wl_list_for_each_reverse(c, &clients, link) {
-		if (VISIBLEON(c, selmon) && !c->isfloating && !c->isfullscreen && !c->swallowedby &&
+		if (VISIBLEON(c, selmon) && !c->isfloating && !c->isfullscreen && c != grabc &&
 			x >= c->geom.x && x <= (c->geom.x + c->geom.width) &&
 			y >= c->geom.y && y <= (c->geom.y + c->geom.height)){
 			return c;
@@ -677,7 +681,7 @@ xytoclient(double x, double y) {
 
 	/* If no client was found at cursor position fallback to closest. */
 	wl_list_for_each_reverse(c, &clients, link) {
-		if (VISIBLEON(c, selmon) && !c->isfloating && !c->isfullscreen && !c->swallowedby) {
+		if (VISIBLEON(c, selmon) && !c->isfloating && !c->isfullscreen && c != grabc) {
 			dx = 0, dy = 0;
 
 			if (x < c->geom.x)

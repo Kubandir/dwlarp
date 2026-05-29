@@ -78,7 +78,7 @@ build() {
     # shellcheck disable=SC2086
     printf '%s\n%s\n' "$local_files" "$sys_files" \
         | awk 'NF' \
-        | xargs -r awk "$_AWK" 2>/dev/null \
+        | xargs -r -d '\n' awk "$_AWK" 2>/dev/null \
         | sort -t'	' -k1,1 -u > "$tmp" || { rm -f "$tmp"; return 1; }
 
     if [ -s "$tmp" ]; then

@@ -47,7 +47,10 @@
 #include <wlr/types/wlr_primary_selection.h>
 #include <wlr/types/wlr_primary_selection_v1.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
-#include <wlr/types/wlr_scene.h>
+#include <scenefx/render/fx_renderer/fx_renderer.h>
+#include <scenefx/types/fx/clipped_region.h>
+#include <scenefx/types/fx/corner_location.h>
+#include <scenefx/types/wlr_scene.h>
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_server_decoration.h>
@@ -113,7 +116,8 @@ struct Client {
 
 	Monitor *mon;
 	struct wlr_scene_tree *scene;
-	struct wlr_scene_rect *border[4]; /* top, bottom, left, right */
+	struct wlr_scene_rect *border; /* full-window rect with rounded center clipped out */
+	struct wlr_scene_shadow *shadow;
 	struct wlr_scene_tree *scene_surface;
 	struct wl_list link;
 	struct wl_list flink;
@@ -146,16 +150,6 @@ struct Client {
 	int isfloating, isurgent, isfullscreen, was_tiled;
 	uint32_t resize; /* configure serial of a pending resize */
 	struct wlr_box old_geom;
-	/* Window swallowing. `swallowing` is the parent terminal this client
-	 * is hiding (NULL = not swallowing anything). `swallowedby` is the
-	 * child currently hiding this client (NULL = visible). At most one
-	 * direction is ever non-NULL on any given client. pid is cached at
-	 * map time so the PPid walk doesn't keep re-issuing
-	 * wl_client_get_credentials syscalls. */
-	Client *swallowing;
-	Client *swallowedby;
-	pid_t pid;
-	unsigned int swallow_retried : 1; /* commitnotify retries swallow once */
 };
 
 typedef struct {
@@ -271,8 +265,6 @@ typedef struct {
 /* function declarations */
 static void applybounds(Client *c, struct wlr_box *bbox);
 static void applyrules(Client *c);
-static pid_t client_pid(Client *c);
-static void trytoswallow(Client *c);
 static void arrange(Monitor *m);
 static void arrangelayer(Monitor *m, struct wl_list *list,
 		struct wlr_box *usable_area, int exclusive);
@@ -578,11 +570,8 @@ arrange(Monitor *m)
 
 	wl_list_for_each(c, &clients, link) {
 		if (c->mon == m) {
-			/* Swallowed parents must stay hidden across arrange()s; without
-			 * this gate every layout pass would unhide them. */
-			wlr_scene_node_set_enabled(&c->scene->node,
-				VISIBLEON(c, m) && !c->swallowedby);
-			client_set_suspended(c, !VISIBLEON(c, m) || c->swallowedby);
+			wlr_scene_node_set_enabled(&c->scene->node, VISIBLEON(c, m));
+			client_set_suspended(c, !VISIBLEON(c, m));
 		}
 	}
 
@@ -991,18 +980,6 @@ commitnotify(struct wl_listener *listener, void *data)
 	/* mark a pending resize as completed */
 	if (c->resize && c->resize <= c->surface.xdg->current.configure_serial)
 		c->resize = 0;
-
-	/* Swallow retry: mapnotify's first attempt can lose to a race where
-	 * client_pid() returns 0 (wl_client credentials not propagated yet) or
-	 * the PPid chain hasn't linked through the launcher shell yet. By the
-	 * time we get a real (non-initial) commit, both are settled — try once
-	 * more. Bounded by the bitfield so we don't retry forever. */
-	if (!c->swallowing && !c->swallowedby && !c->swallow_retried
-	    && !c->isfloating && !c->isfullscreen) {
-		c->swallow_retried = 1;
-		if (!c->pid) c->pid = client_pid(c);
-		trytoswallow(c);
-	}
 }
 
 void
@@ -1852,7 +1829,9 @@ gpureset(struct wl_listener *listener, void *data)
 	struct wlr_renderer *old_drw = drw;
 	struct wlr_allocator *old_alloc = alloc;
 	struct Monitor *m;
-	if (!(drw = wlr_renderer_autocreate(backend)))
+	/* SceneFX effects require its GLES2 fx_renderer; autocreate could pick
+	 * pixman/vulkan, which can't render rounded corners. */
+	if (!(drw = fx_renderer_create(backend)))
 		die("couldn't recreate renderer");
 
 	if (!(alloc = wlr_allocator_autocreate(backend, drw)))
@@ -2071,130 +2050,6 @@ locksession(struct wl_listener *listener, void *data)
 	wlr_session_lock_v1_send_locked(session_lock);
 }
 
-/* ---- swallowing -------------------------------------------------------- */
-
-static int
-is_swallower_appid(Client *c)
-{
-	const char *id = client_get_appid(c);
-	size_t i;
-	if (!id) return 0;
-	for (i = 0; i < LENGTH(swallowappids); i++)
-		if (swallowappids[i] && strstr(id, swallowappids[i]))
-			return 1;
-	return 0;
-}
-
-static pid_t
-client_pid(Client *c)
-{
-	pid_t pid = 0;
-#ifdef XWAYLAND
-	if (client_is_x11(c))
-		return c->surface.xwayland->pid;
-#endif
-	if (c->surface.xdg && c->surface.xdg->client && c->surface.xdg->client->client)
-		wl_client_get_credentials(c->surface.xdg->client->client, &pid, NULL, NULL);
-	return pid;
-}
-
-static pid_t
-ppid_of(pid_t pid)
-{
-	char path[64], buf[256];
-	FILE *f;
-	pid_t ppid = 0;
-	if (pid <= 1) return 0;
-	snprintf(path, sizeof path, "/proc/%d/status", (int)pid);
-	if (!(f = fopen(path, "r"))) return 0;
-	while (fgets(buf, sizeof buf, f))
-		if (sscanf(buf, "PPid: %d", &ppid) == 1) break;
-	fclose(f);
-	return ppid;
-}
-
-/* Walk PPid chain up from `pid`; return the first managed Client whose
- * cached pid matches an ancestor and is a swallower. Bounded so a forked
- * shell-script tree (or a bogus /proc) can't make us loop. */
-static Client *
-find_swallower(pid_t pid, Client *self)
-{
-	Client *c;
-	int depth = 0;
-	while (pid > 1 && depth++ < 32) {
-		pid = ppid_of(pid);
-		if (pid <= 1) return NULL;
-		wl_list_for_each(c, &clients, link) {
-			if (c == self || c->swallowedby)
-				continue;
-			/* Lazy-fetch: a terminal that mapped before its
-			 * wl_client credentials were ready could have c->pid==0,
-			 * which would silently disqualify it as a swallower. */
-			if (!c->pid) c->pid = client_pid(c);
-			if (!c->pid) continue;
-			if (c->pid == pid && is_swallower_appid(c))
-				return c;
-		}
-	}
-	return NULL;
-}
-
-static void
-trytoswallow(Client *c)
-{
-	Client *p;
-	LayoutNode *node;
-	if (c->isfloating || c->isfullscreen) return;
-	if (is_swallower_appid(c)) return;            /* terminals don't swallow */
-	if (!c->pid) return;
-	if (!(p = find_swallower(c->pid, c))) return;
-	if (p->isfloating || p->isfullscreen) return;
-	if (!p->mon || !p->mon->root) return;
-	if (!(node = find_client_node(p->mon->root, p))) return;
-
-	/* Inherit the hidden parent's tile slot. setmon() is the cheapest way to
-	 * migrate tags+monitor if mapnotify's applyrules dropped c elsewhere. */
-	if (c->mon != p->mon)
-		setmon(c, p->mon, p->tags);
-	c->tags = p->tags;
-
-	/* mapnotify's initial arrange already inserted c as its own leaf — pull
-	 * it back out before overwriting p's slot, otherwise the tree ends up
-	 * with two leaves pointing at c and apply_layout halves the area. */
-	remove_client(c->mon, c);
-	if (!(node = find_client_node(p->mon->root, p))) return;
-
-	node->client = c;
-	p->swallowedby = c;
-	c->swallowing  = p;
-	wlr_scene_node_set_enabled(&p->scene->node, 0);
-	client_set_suspended(p, 1);
-	c->geom = p->geom;
-	arrange(c->mon);
-	focusclient(c, 1);
-}
-
-static void
-unswallow(Client *c)
-{
-	Client *p = c->swallowing;
-	LayoutNode *node;
-	if (!p) return;
-	c->swallowing  = NULL;
-	p->swallowedby = NULL;
-	/* Swap the BSP slot back to the parent. find_client_node walks the
-	 * tree by Client*, and c is what's there now. */
-	if (p->mon && p->mon->root
-	    && (node = find_client_node(p->mon->root, c)))
-		node->client = p;
-	if (client_surface(p)->mapped) {
-		wlr_scene_node_set_enabled(&p->scene->node, 1);
-		p->geom = c->geom; /* apply_layout will repaint exactly here */
-	}
-}
-
-/* ------------------------------------------------------------------------ */
-
 void
 mapnotify(struct wl_listener *listener, void *data)
 {
@@ -2202,7 +2057,6 @@ mapnotify(struct wl_listener *listener, void *data)
 	Client *p = NULL;
 	Client *w, *c = wl_container_of(listener, c, map);
 	Monitor *m;
-	int i;
 
 	/* Create scene tree for this client and its border */
 	c->scene = client_surface(c)->data = wlr_scene_tree_create(layers[LyrTile]);
@@ -2228,11 +2082,19 @@ mapnotify(struct wl_listener *listener, void *data)
 		goto unset_fullscreen;
 	}
 
-	for (i = 0; i < 4; i++) {
-		c->border[i] = wlr_scene_rect_create(c->scene, 0, 0,
-				c->isurgent ? urgentcolor : bordercolor);
-		c->border[i]->node.data = c;
-	}
+	/* One rect spanning the whole window; resize() rounds it and clips a
+	 * rounded hole where the surface sits, so it reads as a rounded border
+	 * ring while transparent windows still show what's behind them. Kept at
+	 * the bottom of the client tree, beneath the surface. */
+	c->border = wlr_scene_rect_create(c->scene, 0, 0,
+			c->isurgent ? urgentcolor : bordercolor);
+	c->border->node.data = c;
+	wlr_scene_node_lower_to_bottom(&c->border->node);
+
+	/* Shadow sits below the border rect; resize() keeps it sized and placed. */
+	c->shadow = wlr_scene_shadow_create(c->scene, 0, 0, border_radius,
+			shadow_sigma, shadowcolor);
+	wlr_scene_node_lower_to_bottom(&c->shadow->node);
 
 	/* Initialize client geometry with room for border */
 	client_set_tiled(c, WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT | WLR_EDGE_RIGHT);
@@ -2253,8 +2115,6 @@ mapnotify(struct wl_listener *listener, void *data)
 	} else {
 		applyrules(c);
 	}
-	c->pid = client_pid(c);
-	trytoswallow(c);
 	/* Center floating windows on their monitor's usable area instead of
 	 * letting them spawn at (0,0) — gives proper popup/dialog placement.
 	 * Must call resize() since applyrules→setmon already positioned the
@@ -2749,11 +2609,31 @@ requestmonstate(struct wl_listener *listener, void *data)
 	updatemons(NULL, NULL);
 }
 
+/* Per-buffer corner rounding, applied by walking a client's surface tree. */
+struct cornerdata {
+	int radius;
+	enum corner_location corners;
+};
+
+void
+roundbuffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
+{
+	struct cornerdata *cd = data;
+	struct wlr_scene_surface *s = wlr_scene_surface_try_from_buffer(buffer);
+
+	/* Popups (menus, tooltips) keep square corners. */
+	if (!s || wlr_xdg_popup_try_from_wlr_surface(s->surface))
+		return;
+	wlr_scene_buffer_set_corner_radius(buffer, cd->radius, cd->corners);
+}
+
 void
 resize(Client *c, struct wlr_box geo, int interact)
 {
 	struct wlr_box *bbox;
 	struct wlr_box clip;
+	struct cornerdata cd;
+	int outer, inner;
 
 	if (!c->mon || !client_surface(c)->mapped)
 		return;
@@ -2764,16 +2644,39 @@ resize(Client *c, struct wlr_box geo, int interact)
 	c->geom = geo;
 	applybounds(c, bbox);
 
+	/* outer = border ring radius, inner = surface/hole radius (one ring
+	 * thickness smaller so the ring is even all the way around the corner).
+	 * Fullscreen windows are square. */
+	outer = c->isfullscreen ? 0 : border_radius;
+	inner = MAX(outer - c->bw, 0);
+	cd.radius = inner;
+	cd.corners = outer ? CORNER_LOCATION_ALL : CORNER_LOCATION_NONE;
+
 	/* Update scene-graph, including borders */
 	wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
 	wlr_scene_node_set_position(&c->scene_surface->node, c->bw, c->bw);
-	wlr_scene_rect_set_size(c->border[0], c->geom.width, c->bw);
-	wlr_scene_rect_set_size(c->border[1], c->geom.width, c->bw);
-	wlr_scene_rect_set_size(c->border[2], c->bw, c->geom.height - 2 * c->bw);
-	wlr_scene_rect_set_size(c->border[3], c->bw, c->geom.height - 2 * c->bw);
-	wlr_scene_node_set_position(&c->border[1]->node, 0, c->geom.height - c->bw);
-	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
-	wlr_scene_node_set_position(&c->border[3]->node, c->geom.width - c->bw, c->bw);
+
+	/* Single full-window rect; punch a rounded hole where the surface sits so
+	 * only the border ring is painted and transparent windows show through. */
+	wlr_scene_rect_set_size(c->border, c->geom.width, c->geom.height);
+	wlr_scene_rect_set_corner_radius(c->border, outer, cd.corners);
+	wlr_scene_rect_set_clipped_region(c->border, (struct clipped_region){
+		.area = {
+			.x = c->bw,
+			.y = c->bw,
+			.width = MAX(c->geom.width - 2 * c->bw, 0),
+			.height = MAX(c->geom.height - 2 * c->bw, 0),
+		},
+		.corner_radius = inner,
+		.corners = cd.corners,
+	});
+	wlr_scene_node_for_each_buffer(&c->scene_surface->node, roundbuffer, &cd);
+
+	/* Shadow: same footprint as the window, offset 2px down, hidden fullscreen. */
+	wlr_scene_node_set_enabled(&c->shadow->node, !c->isfullscreen);
+	wlr_scene_shadow_set_size(c->shadow, c->geom.width, c->geom.height);
+	wlr_scene_shadow_set_corner_radius(c->shadow, outer);
+	wlr_scene_node_set_position(&c->shadow->node, 0, 2);
 
 	/* this is a no-op if size hasn't changed */
 	c->resize = client_set_size(c, c->geom.width - 2 * c->bw,
@@ -3137,11 +3040,11 @@ setup(void)
 	drag_icon = wlr_scene_tree_create(&scene->tree);
 	wlr_scene_node_place_below(&drag_icon->node, &layers[LyrBlock]->node);
 
-	/* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
-	 * can also specify a renderer using the WLR_RENDERER env var.
-	 * The renderer is responsible for defining the various pixel formats it
-	 * supports for shared memory, this configures that for clients. */
-	if (!(drw = wlr_renderer_autocreate(backend)))
+	/* SceneFX's fx_renderer (GLES2) is required for rounded corners and the
+	 * other scene effects; it replaces wlr_renderer_autocreate. It defines the
+	 * various pixel formats it supports for shared memory, configuring that for
+	 * clients. WLR_RENDERER is therefore ignored. */
+	if (!(drw = fx_renderer_create(backend)))
 		die("couldn't create renderer");
 	wl_signal_add(&drw->events.lost, &gpu_reset);
 
@@ -3543,18 +3446,6 @@ unmapnotify(struct wl_listener *listener, void *data)
 			focusclient(focustop(selmon), 1);
 		}
 	} else {
-		/* Restore a hidden parent terminal (if any) BEFORE the BSP cleanup
-		 * below; unswallow swaps the tile slot's Client* back, so the
-		 * parent picks up the geometry the child was at instead of
-		 * being re-inserted at a default position. */
-		unswallow(c);
-		/* If something else was hiding behind this client, that parent is
-		 * stranded — drop the dangling references so the dwm-style
-		 * "swallowing dies first" path doesn't UAF. */
-		if (c->swallowedby) {
-			c->swallowedby->swallowing = NULL;
-			c->swallowedby = NULL;
-		}
 		wl_list_remove(&c->link);
 		setmon(c, NULL, 0);
 		wl_list_remove(&c->flink);
